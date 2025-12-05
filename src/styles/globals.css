@@ -1,0 +1,145 @@
+/* ---------------------------------------------------------
+   AMPLIFY UI SHOULD LOAD FIRST
+--------------------------------------------------------- */
+@import "@aws-amplify/ui-react/styles.css";
+
+/* ---------------------------------------------------------
+   TAILWIND BASE
+--------------------------------------------------------- */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------
+   GLOBAL RESET
+--------------------------------------------------------- */
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* Remove default Amplify background override */
+.amplify-authenticator {
+  background: transparent !important;
+}
+
+/* ---------------------------------------------------------
+   ANIMATIONS
+--------------------------------------------------------- */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s ease-out;
+}
+
+/* ---------------------------------------------------------
+   SIGN-UP FLOATING LABELS
+   IMPORTANT: SCOPED ONLY TO SIGNUP FORM
+--------------------------------------------------------- */
+
+.floating-wrapper .floating-group {
+  position: relative;
+}
+
+.floating-wrapper .floating-input {
+  width: 100%;
+  padding: 14px 12px 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: white;
+  font-size: 16px;
+  transition: all 0.2s ease;
+}
+
+.floating-wrapper .floating-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+}
+
+.floating-wrapper .floating-label {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #6b7280;
+  transition: 0.2s ease;
+  font-size: 15px;
+  pointer-events: none;
+}
+
+.floating-wrapper .floating-input:not(:placeholder-shown) + .floating-label,
+.floating-wrapper .floating-input:focus + .floating-label {
+  top: 6px;
+  font-size: 12px;
+  color: #2563eb;
+}
+
+/* ---------------------------------------------------------
+   PASSWORD STRENGTH BAR
+--------------------------------------------------------- */
+
+.password-meter {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.password-meter div {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* ---------------------------------------------------------
+   PROFILE PAGE INPUTS
+--------------------------------------------------------- */
+
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 8px;
+  font-size: 15px;
+  margin-top: 4px;
+}
+
+/* ---------------------------------------------------------
+   HOVER ELEVATION (cards, buttons, tables)
+--------------------------------------------------------- */
+.hover-elevate {
+  transition: all 0.25s ease;
+}
+
+.hover-elevate:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+
+/* ---------------------------------------------------------
+   MOBILE OPTIMIZATION
+--------------------------------------------------------- */
+@media (max-width: 768px) {
+  .floating-wrapper .floating-input {
+    font-size: 15px;
+    padding: 12px 12px 6px;
+  }
+
+  .floating-wrapper .floating-label {
+    font-size: 14px;
+  }
+}

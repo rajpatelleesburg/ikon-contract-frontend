@@ -1,0 +1,70 @@
+# =========================================
+# Node dependencies
+# =========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================================
+# Next.js build output
+# =========================================
+.next/
+out/
+dist/
+build/
+
+# =========================================
+# AWS Amplify build artifacts
+# =========================================
+amplify/#legacy
+amplify/backend/#deprecated
+amplify/#current-cloud-backend
+
+# =========================================
+# Local env files (not committed)
+# =========================================
+.env
+.env.local
+.env.*.local
+
+# =========================================
+# OS / Editor junk
+# =========================================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# =========================================
+# Logs
+# =========================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# =========================================
+# Zip and build artifacts
+# =========================================
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# =========================================
+# PowerShell scripts (optional)
+# You can include them if needed
+# Uncomment if you want to ignore them
+# =========================================
+# scripts/*.ps1
+# scripts/*.json
+
+# =========================================
+# AWS / CLI files
+# =========================================
+.aws/

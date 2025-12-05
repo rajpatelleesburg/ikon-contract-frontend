@@ -1,0 +1,26 @@
+{
+  "name": "ikon-contract-frontend-premium",
+  "version": "4.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@aws-amplify/ui-react": "^5.3.3",
+    "@heroicons/react": "^2.2.0",
+    "aws-amplify": "^5.3.29",
+    "axios": "^1.13.2",
+    "cheerio": "^1.1.2",
+    "next": "^16.0.7",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "react-hot-toast": "^2.4.1"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.0"
+  }
+}
