@@ -20,9 +20,7 @@ export default function SummaryTile({
         <h2 className="text-sm font-semibold text-slate-800">
           Dashboard Summary
         </h2>
-        <span className="text-xs uppercase text-slate-400 tracking-wide">
-          Tile 2
-        </span>
+        
       </div>
 
       <div className="grid grid-cols-3 gap-3">
