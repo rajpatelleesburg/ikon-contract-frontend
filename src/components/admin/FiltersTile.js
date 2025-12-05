@@ -77,7 +77,6 @@ export default function FiltersTile({
           </div>
 
           {/* Back to Dashboard ONLY when results exist */}
-          {/*
           {hasResults && (
             <div className="flex items-center gap-4 pt-2">
               <button
@@ -88,7 +87,6 @@ export default function FiltersTile({
               </button>
             </div>
           )}
-          */}
         </div>
       )}
     </div>
