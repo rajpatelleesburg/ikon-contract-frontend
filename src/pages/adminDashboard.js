@@ -1,8 +1,8 @@
-
 // src/pages/adminDashboard.js
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
+import toast from "react-hot-toast";
 import HeaderTile from "../components/admin/HeaderTile";
 import SummaryTile from "../components/admin/SummaryTile";
 import FiltersTile from "../components/admin/FiltersTile";
@@ -227,6 +227,56 @@ export default function AdminDashboard({ user, signOut }) {
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
+  // 🔹 Dynamic bulk cleanup options based on oldest contract age
+  const bulkOptions = useMemo(() => {
+    if (!flatFiles.length) {
+      return [
+        { value: 5, label: "Older than 5 years" },
+        { value: 3, label: "Older than 3 years" },
+        { value: 2, label: "Older than 2 years" },
+      ];
+    }
+
+    const now = new Date();
+    let oldest = now;
+    flatFiles.forEach(({ file }) => {
+      const d = new Date(file.lastModified);
+      if (!isNaN(d) && d < oldest) oldest = d;
+    });
+
+    const diffMs = now - oldest;
+    const diffYears = diffMs / (1000 * 60 * 60 * 24 * 365.25);
+
+    if (diffYears >= 5) {
+      return [
+        { value: 5, label: "Older than 5 years" },
+        { value: 3, label: "Older than 3 years" },
+        { value: 2, label: "Older than 2 years" },
+      ];
+    }
+    if (diffYears >= 3) {
+      return [
+        { value: 3, label: "Older than 3 years" },
+        { value: 2, label: "Older than 2 years" },
+        { value: 1, label: "Older than 1 year" },
+      ];
+    }
+    if (diffYears >= 2) {
+      return [
+        { value: 2, label: "Older than 2 years" },
+        { value: 1, label: "Older than 1 year" },
+        { value: 0.5, label: "Older than 6 months" },
+      ];
+    }
+
+    // No contracts older than ~2 years → focus on this year, quarter, month
+    return [
+      { value: 1, label: "Older than 1 year (This year)" },
+      { value: 0.25, label: "Older than 3 months (This quarter)" },
+      { value: 1 / 12, label: "Older than 1 month (This month)" },
+    ];
+  }, [flatFiles]);
+
   const applyFilters = () => {
     let filtered = JSON.parse(JSON.stringify(grouped));
 
@@ -328,6 +378,7 @@ export default function AdminDashboard({ user, signOut }) {
       }
     }
   }, [hasFilterInput, filteredHasResults, resultsSource, dashboardMode]);
+
   const expandAll = () => {
     const all = {};
     Object.keys(grouped).forEach((name) => (all[name] = true));
@@ -356,7 +407,7 @@ export default function AdminDashboard({ user, signOut }) {
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
       const key = deleteTarget.file.key;
 
-      await fetch(
+      const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${encodeURIComponent(
           key
         )}`,
@@ -366,10 +417,14 @@ export default function AdminDashboard({ user, signOut }) {
         }
       );
 
+      if (!res.ok) throw new Error("Delete failed");
+
       await fetchContracts();
+      toast.success("File deleted");
     } catch (err) {
       console.error("Error deleting file:", err);
       setError("Unable to delete file. Please try again.");
+      toast.error("Unable to delete file. Please try again.");
     } finally {
       closeDeleteModal();
     }
@@ -427,9 +482,11 @@ export default function AdminDashboard({ user, signOut }) {
 
       await res.json();
       await fetchContracts();
+      toast.success("Bulk cleanup request submitted");
     } catch (err) {
       console.error("Bulk delete error:", err);
       setError("Bulk delete failed. Please try again.");
+      toast.error("Bulk delete failed. Please try again.");
     } finally {
       closeBulkModal();
     }
@@ -443,10 +500,8 @@ export default function AdminDashboard({ user, signOut }) {
     );
   }
 
-  
-
   const handleBackToDashboard = () => {
-    // Reset everything back to a clean dashboard (Option 3)
+    // Reset everything back to a clean dashboard (Option D: full reset)
     setDashboardMode("normal");
     setFocusedAgent(null);
     setResultsSource(null);
@@ -466,31 +521,36 @@ export default function AdminDashboard({ user, signOut }) {
   const showAnyResults = hasSummaryResults || hasFilterResults;
   const isFilterMode = hasFilterResults;
 
-  const resultsSection = showAnyResults ? (
-    <AgentSection
-      mode={dashboardMode}
-      onBack={handleBackToDashboard}
-      grouped={isFilterMode ? filteredGrouped : grouped}
-      filteredGrouped={filteredGrouped}
-      expanded={expanded}
-      setExpanded={setExpanded}
-      formatSize={formatSize}
-      onDelete={openDeleteModal}
-      onDragStart={(e, file) => {
-        const url = file?.downloadUrl || file?.url;
-        if (!url) return;
-        e.dataTransfer.setData(
-          "DownloadURL",
-          `application/octet-stream:${url}`
-        );
-      }}
-      windowInfo={windowInfo}
-      allContractsSorted={allContractsSorted}
-      focusedAgent={focusedAgent}
-      setFocusedAgent={setFocusedAgent}
-    />
-  ) : null;
+  // show Back when summary/filter drilling or bulk tile is open
+  const showBackLink =
+    hasSummaryResults || hasFilterResults || bulkTileOpen;
 
+  const resultsSection = showAnyResults ? (
+    <div className="space-y-3 animate-fade-in">
+      <AgentSection
+        mode={dashboardMode}
+        grouped={grouped}
+        filteredGrouped={filteredGrouped}
+        expanded={expanded}
+        setExpanded={setExpanded}
+        formatSize={formatSize}
+        onDelete={openDeleteModal}
+        onDragStart={(e, file) => {
+          const url = file?.downloadUrl || file?.url;
+          if (!url) return;
+          e.dataTransfer.setData(
+            "DownloadURL",
+            `application/octet-stream:${url}`
+          );
+        }}
+        windowInfo={windowInfo}
+        allContractsSorted={allContractsSorted}
+        focusedAgent={focusedAgent}
+        setFocusedAgent={setFocusedAgent}
+        searchTerm={isFilterMode ? search : ""}
+      />
+    </div>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center p-6">
@@ -544,9 +604,8 @@ export default function AdminDashboard({ user, signOut }) {
           }}
         />
 
-{/* 👉 Insert results RIGHT AFTER Tile 2 (SummaryTile) */}
-{hasSummaryResults && resultsSection}
-
+        {/* Summary results immediately under Tile 2 */}
+        {hasSummaryResults && resultsSection}
 
         {/* TILE 3: FILTERS (COLLAPSIBLE) */}
         <FiltersTile
@@ -564,9 +623,20 @@ export default function AdminDashboard({ user, signOut }) {
           onBack={handleBackToDashboard}
         />
 
-
+        {/* Filter results under Tile 3 */}
         {hasFilterResults && resultsSection}
 
+        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
+        {showBackLink && (
+          <div className="pt-1 pb-2 animate-fade-in">
+            <button
+              onClick={handleBackToDashboard}
+              className="text-blue-600 hover:underline text-sm"
+            >
+              ← Back to Dashboard
+            </button>
+          </div>
+        )}
 
         {/* TILE 4: BULK CLEANUP (COLLAPSIBLE) */}
         <BulkDeleteTile
@@ -575,9 +645,10 @@ export default function AdminDashboard({ user, signOut }) {
           bulkYears={bulkYears}
           setBulkYears={setBulkYears}
           openBulkModal={openBulkModal}
+          bulkOptions={bulkOptions}
         />
-
       </div>
+
       {/* Individual Delete Modal */}
       {showDeleteModal && deleteTarget && (
         <DeleteModal
