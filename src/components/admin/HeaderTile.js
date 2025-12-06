@@ -1,9 +1,9 @@
-
 "use client";
 
 export default function HeaderTile({ signOut }) {
   return (
     <div className="relative flex items-center mb-2">
+      {/* Logo (unchanged) */}
       <div className="flex items-center gap-2">
         <img
           src="/IkonLogo.png"
@@ -12,12 +12,14 @@ export default function HeaderTile({ signOut }) {
         />
       </div>
 
-      <div className="absolute left-1/2 -translate-x-1/2 text-center">
+      {/* Centered Admin text — hidden on mobile, visible from sm+ */}
+      <div className="absolute left-1/2 -translate-x-1/2 text-center hidden sm:block">
         <h1 className="text-2xl font-bold text-slate-800 tracking-wide">
           Admin
         </h1>
       </div>
 
+      {/* Sign Out (unchanged) */}
       <div className="ml-auto">
         <button
           onClick={signOut}
