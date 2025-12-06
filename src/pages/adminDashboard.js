@@ -604,6 +604,18 @@ export default function AdminDashboard({ user, signOut }) {
           }}
         />
 
+        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
+        {showBackLink && (
+          <div className="pt-1 pb-2 animate-fade-in">
+            <button
+              onClick={handleBackToDashboard}
+              className="text-blue-600 hover:underline text-sm"
+            >
+              ← Back to Dashboard
+            </button>
+          </div>
+        )}
+
         {/* Summary results immediately under Tile 2 */}
         {hasSummaryResults && resultsSection}
 
@@ -626,17 +638,7 @@ export default function AdminDashboard({ user, signOut }) {
         {/* Filter results under Tile 3 */}
         {hasFilterResults && resultsSection}
 
-        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
-        {showBackLink && (
-          <div className="pt-1 pb-2 animate-fade-in">
-            <button
-              onClick={handleBackToDashboard}
-              className="text-blue-600 hover:underline text-sm"
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
-        )}
+        
 
         {/* TILE 4: BULK CLEANUP (COLLAPSIBLE) */}
         <BulkDeleteTile
