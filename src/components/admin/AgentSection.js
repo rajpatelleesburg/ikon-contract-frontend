@@ -1,6 +1,15 @@
 // src/components/admin/AgentSection.js
 "use client";
 
+// ✅ ADD: stage badge colors (admin view)
+const STAGE_COLORS = {
+  UPLOADED: "bg-slate-200 text-slate-700",
+  EMD_COLLECTED: "bg-blue-100 text-blue-700",
+  CONTINGENCIES: "bg-yellow-100 text-yellow-800",
+  CLOSED: "bg-green-100 text-green-700",
+  COMMISSION: "bg-purple-100 text-purple-700",
+};
+
 export default function AgentSection({
   mode,
   grouped,
@@ -34,6 +43,31 @@ export default function AgentSection({
     );
   };
 
+  // ✅ ADD: reusable stage/attention UI (safe defaults)
+  const renderStageMeta = (file) => {
+    const stage = file?.stage || "UPLOADED";
+    const label = file?.stageLabel || stage;
+    const attention = file?.attention;
+
+    return (
+      <div className="flex items-center gap-2 mt-1">
+        <span
+          className={`text-[11px] px-2 py-1 rounded-md ${
+            STAGE_COLORS[stage] || STAGE_COLORS.UPLOADED
+          }`}
+        >
+          {label}
+        </span>
+
+        {attention ? (
+          <span className="text-[11px] text-red-600 font-semibold">
+            ⚠ {attention}
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
   if (mode === "allContracts") {
     return (
       <section className="space-y-3 animate-fade-in">
@@ -60,6 +94,9 @@ export default function AgentSection({
                     {new Date(file.lastModified).toLocaleString()} —{" "}
                     <span className="font-medium">{highlight(agent)}</span>
                   </div>
+
+                  {/* ✅ ADD: Stage + Attention */}
+                  {renderStageMeta(file)}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
@@ -123,6 +160,9 @@ export default function AgentSection({
                         <div className="text-[11px] text-slate-500">
                           {new Date(file.lastModified).toLocaleString()}
                         </div>
+
+                        {/* ✅ ADD: Stage + Attention */}
+                        {renderStageMeta(file)}
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
@@ -205,6 +245,9 @@ export default function AgentSection({
                               ? new Date(file.lastModified).toLocaleString()
                               : ""}
                           </div>
+
+                          {/* ✅ ADD: Stage + Attention */}
+                          {renderStageMeta(file)}
                         </div>
                         <div className="flex flex-col items-end gap-1">
                           <span className="text-[11px] px-2 py-1 bg-slate-200 rounded-md text-slate-700">
@@ -293,6 +336,9 @@ export default function AgentSection({
                             ? new Date(f.lastModified).toLocaleString()
                             : ""}
                         </div>
+
+                        {/* ✅ ADD: Stage + Attention */}
+                        {renderStageMeta(f)}
                       </div>
 
                       <div className="flex flex-col items-end gap-2">
