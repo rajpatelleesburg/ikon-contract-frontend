@@ -11,6 +11,28 @@ import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
 import { Auth } from "aws-amplify";
 
+
+/* ======================================================
+   ✅ ADDITIVE: STAGE + ATTENTION HELPERS (ADMIN VIEW)
+====================================================== */
+
+const STAGE_LABELS = {
+  UPLOADED: "Uploaded",
+  EMD_COLLECTED: "EMD Collected",
+  CONTINGENCIES: "Contingencies",
+  CLOSED: "Closed",
+  COMMISSION: "Commission",
+};
+
+const ATTENTION_REASON = {
+  UPLOADED: "EMD not collected",
+  EMD_COLLECTED: "Contingencies pending",
+  CONTINGENCIES: "Closing approaching",
+};
+
+const getAttentionReason = (stage) => ATTENTION_REASON[stage] || null;
+
+
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
   const [expanded, setExpanded] = useState({});
@@ -79,12 +101,22 @@ export default function AdminDashboard({ user, signOut }) {
             ? parts[0].replace(/-/g, " ")
             : "Unknown Agent";
 
+        const stage = f.stage || "UPLOADED";
+
         const file = {
           key,
           filename: parts.length > 1 ? parts[1] : "Contract",
           lastModified: f.lastModified,
           url: f.url,
           downloadUrl: f.url,
+
+          // ✅ new admin-visible metadata
+          stage,
+          stageLabel: STAGE_LABELS[stage],
+          attention: getAttentionReason(stage),
+
+          // ✅ future-ready (Sprint 3)
+          closingDate: f.stageData?.closed?.closingDate || null,
         };
 
         if (!groupedData[agentName]) groupedData[agentName] = [];
