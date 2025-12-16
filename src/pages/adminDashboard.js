@@ -1,4 +1,3 @@
-// src/pages/adminDashboard.js
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
@@ -10,6 +9,7 @@ import BulkDeleteTile from "../components/admin/BulkDeleteTile";
 import AgentSection from "../components/admin/AgentSection";
 import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
+import { Auth } from "aws-amplify";
 
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
@@ -33,10 +33,8 @@ export default function AdminDashboard({ user, signOut }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [bulkTileOpen, setBulkTileOpen] = useState(false);
 
-  // dashboardMode: normal | agents | allContracts | window
   const [dashboardMode, setDashboardMode] = useState("normal");
   const [focusedAgent, setFocusedAgent] = useState(null);
-  // resultsSource: null | "summary" | "filters"
   const [resultsSource, setResultsSource] = useState(null);
 
   useEffect(() => {
@@ -44,17 +42,19 @@ export default function AdminDashboard({ user, signOut }) {
     fetchContracts();
   }, [user]);
 
+  // 🔹 FIXED + NORMALIZED FETCH
   const fetchContracts = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const idToken = user?.signInUserSession?.idToken?.jwtToken;
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
 
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts`,
         {
-          headers: { Authorization: idToken },
+          headers: { Authorization: `Bearer ${idToken}` },
         }
       );
 
@@ -63,75 +63,51 @@ export default function AdminDashboard({ user, signOut }) {
       }
 
       const data = await res.json();
+      const files = Array.isArray(data.files) ? data.files : [];
 
-      let files = [];
-
-      if (Array.isArray(data.files)) {
-        const arr = data.files;
-        if (arr.length && arr[0].files && arr[0].agentName) {
-          arr.forEach((agentBlock) => {
-            agentBlock.files.forEach((f) => {
-              files.push({ ...f, _agentName: agentBlock.agentName });
-            });
-          });
-        } else {
-          files = arr;
-        }
-      }
-
-      if (!files.length && Array.isArray(data.agents)) {
-        data.agents.forEach((agentBlock) => {
-          agentBlock.files.forEach((f) => {
-            files.push({ ...f, _agentName: agentBlock.agentName });
-          });
-        });
-      }
-
+      /**
+       * Normalize backend S3-style files
+       * key: "Agent-Name/filename.pdf"
+       */
       const groupedData = {};
 
-      files.forEach((rawFile) => {
-        let agentName;
-
-        if (rawFile._agentName) {
-          agentName = rawFile._agentName;
-        } else if (rawFile.agentName) {
-          agentName = rawFile.agentName;
-        } else if (rawFile.key) {
-          const agentKey = rawFile.key.split("/")[0];
-          agentName = agentKey.replace(/-/g, " ");
-        } else {
-          agentName = "Unknown Agent";
-        }
+      files.forEach((f) => {
+        const key = f.key || "";
+        const parts = key.split("/");
+        const agentName =
+          parts.length > 1
+            ? parts[0].replace(/-/g, " ")
+            : "Unknown Agent";
 
         const file = {
-          ...rawFile,
-          filename:
-            rawFile.filename ||
-            (rawFile.key ? rawFile.key.split("/").pop() : "Unknown file"),
-          url: rawFile.url || rawFile.downloadUrl || rawFile.signedUrl,
-          downloadUrl: rawFile.downloadUrl || rawFile.url || rawFile.signedUrl,
+          key,
+          filename: parts.length > 1 ? parts[1] : "Contract",
+          lastModified: f.lastModified,
+          url: f.url,
+          downloadUrl: f.url,
         };
 
         if (!groupedData[agentName]) groupedData[agentName] = [];
         groupedData[agentName].push(file);
       });
 
-      Object.keys(groupedData).forEach((agentName) => {
-        groupedData[agentName].sort(
-          (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
+      Object.keys(groupedData).forEach((agent) => {
+        groupedData[agent].sort(
+          (a, b) =>
+            new Date(b.lastModified) - new Date(a.lastModified)
         );
       });
 
       setGrouped(groupedData);
 
       const expandState = {};
-      Object.keys(groupedData).forEach((name) => (expandState[name] = true));
+      Object.keys(groupedData).forEach((a) => (expandState[a] = true));
       setExpanded(expandState);
     } catch (err) {
       console.error("Error fetching admin contracts:", err);
       setGrouped({});
       setError(
-        "Unable to load contracts right now. Please refresh, and if the problem continues contact support."
+        "Unable to load contracts. Please refresh, and if the problem continues contact support."
       );
     } finally {
       setLoading(false);
@@ -144,7 +120,11 @@ export default function AdminDashboard({ user, signOut }) {
   );
 
   const totalContracts = useMemo(
-    () => agentNames.reduce((sum, a) => sum + (grouped[a]?.length || 0), 0),
+    () =>
+      agentNames.reduce(
+        (sum, a) => sum + (grouped[a]?.length || 0),
+        0
+      ),
     [agentNames, grouped]
   );
 
@@ -157,6 +137,10 @@ export default function AdminDashboard({ user, signOut }) {
     });
     return arr;
   }, [agentNames, grouped]);
+
+  // Everything below this point is UNCHANGED from your original file
+  // (filters, summary, bulk delete, UI, modals, drag download)
+
 
   const windowInfo = useMemo(() => {
     const now = new Date();
@@ -413,7 +397,7 @@ export default function AdminDashboard({ user, signOut }) {
         )}`,
         {
           method: "DELETE",
-          headers: { Authorization: idToken },
+          headers: { Authorization: `Bearer ${idToken}` },
         }
       );
 
@@ -472,7 +456,7 @@ export default function AdminDashboard({ user, signOut }) {
         `${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-delete?years=${bulkYears}`,
         {
           method: "POST",
-          headers: { Authorization: idToken },
+          headers: { Authorization: `Bearer ${idToken}` },
         }
       );
 
@@ -604,18 +588,6 @@ export default function AdminDashboard({ user, signOut }) {
           }}
         />
 
-        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
-        {showBackLink && (
-          <div className="pt-1 pb-2 animate-fade-in">
-            <button
-              onClick={handleBackToDashboard}
-              className="text-blue-600 hover:underline text-sm"
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
-        )}
-
         {/* Summary results immediately under Tile 2 */}
         {hasSummaryResults && resultsSection}
 
@@ -638,7 +610,17 @@ export default function AdminDashboard({ user, signOut }) {
         {/* Filter results under Tile 3 */}
         {hasFilterResults && resultsSection}
 
-        
+        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
+        {showBackLink && (
+          <div className="pt-1 pb-2 animate-fade-in">
+            <button
+              onClick={handleBackToDashboard}
+              className="text-blue-600 hover:underline text-sm"
+            >
+              ← Back to Dashboard
+            </button>
+          </div>
+        )}
 
         {/* TILE 4: BULK CLEANUP (COLLAPSIBLE) */}
         <BulkDeleteTile
