@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/router";
 import { Auth } from "aws-amplify";
 import toast from "react-hot-toast";
 import AddressSearch from "./AddressSearch";
@@ -35,6 +36,8 @@ const sha256Base64 = async (file) => {
 };
 
 export default function FileUpload() {
+  const router = useRouter();
+
   const [file, setFile] = useState(null);
   const [address, setAddress] = useState(null);
   const [progress, setProgress] = useState(0);
@@ -73,8 +76,9 @@ export default function FileUpload() {
 
       const user = await Auth.currentAuthenticatedUser();
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
+
       if (!idToken) {
-        toast.error("Unable to read authentication token.");
+        toast.error("Unable to read access token.");
         setUploading(false);
         return;
       }
@@ -84,38 +88,33 @@ export default function FileUpload() {
       const desiredName = generateFilename(address, file.name);
 
       // Request presigned URL
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/presign`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          filename: desiredName,
-          contentType: file.type,
-          fileSize: file.size,
-          checksumSha256,
-          address,
-        }),
-      });
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_PRESIGN_API_URL}/presign`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            filename: desiredName,
+            contentType: file.type,
+            fileSize: file.size,
+            checksumSha256,
+            address,
+          }),
+        }
+      );
 
-      let data = null;
+      let data;
       try {
         data = await res.json();
       } catch {
-        // If API Gateway returns non-JSON error
         data = null;
       }
 
-      if (!res.ok) {
-        console.error("Presign error:", data);
-        toast.error(data?.error || `Presign failed (${res.status})`);
-        setUploading(false);
-        return;
-      }
-
-      if (!data?.url) {
-        toast.error("No upload URL returned.");
+      if (!res.ok || !data?.url) {
+        toast.error(data?.error || "Presign failed");
         setUploading(false);
         return;
       }
@@ -125,8 +124,6 @@ export default function FileUpload() {
       const xhr = new XMLHttpRequest();
       xhr.open("PUT", url);
 
-      // ✅ REQUIRED for checksum-enforced presigned PUT
-      // backend returns requiredHeaders['x-amz-checksum-sha256'] === checksumSha256
       if (requiredHeaders?.["x-amz-checksum-sha256"]) {
         xhr.setRequestHeader(
           "x-amz-checksum-sha256",
@@ -134,7 +131,6 @@ export default function FileUpload() {
         );
       }
 
-      // keep content-type consistent
       if (requiredHeaders?.["Content-Type"]) {
         xhr.setRequestHeader("Content-Type", requiredHeaders["Content-Type"]);
       }
@@ -150,6 +146,11 @@ export default function FileUpload() {
           toast.success("Upload complete!");
           setProgress(0);
           setFile(null);
+
+          // ✅ Redirect back to Agent Dashboard
+          setTimeout(() => {
+            router.push("/dashboard");
+          }, 600);
         } else {
           toast.error(`Upload failed (${xhr.status})`);
         }
@@ -183,17 +184,21 @@ export default function FileUpload() {
         }`}
       />
 
-
       {address && file && (
         <div className="bg-slate-50 p-3 rounded text-sm text-slate-700">
           <div className="text-xs text-slate-500">S3 file name</div>
-          <div className="font-semibold">{generateFilename(address, file.name)}</div>
+          <div className="font-semibold">
+            {generateFilename(address, file.name)}
+          </div>
         </div>
       )}
 
       {progress > 0 && (
         <div className="bg-gray-200 h-2 w-full rounded">
-          <div className="bg-blue-600 h-2 rounded" style={{ width: `${progress}%` }} />
+          <div
+            className="bg-blue-600 h-2 rounded transition-all"
+            style={{ width: `${progress}%` }}
+          />
         </div>
       )}
 
@@ -201,7 +206,9 @@ export default function FileUpload() {
         onClick={upload}
         disabled={uploading || !address || !file}
         className={`w-full px-4 py-2 rounded text-white ${
-          uploading ? "bg-blue-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
+          uploading
+            ? "bg-blue-400 cursor-not-allowed"
+            : "bg-blue-600 hover:bg-blue-700"
         } transition`}
       >
         {uploading ? "Uploading..." : "Upload"}
