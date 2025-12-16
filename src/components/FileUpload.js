@@ -176,9 +176,13 @@ export default function FileUpload() {
       <input
         type="file"
         accept=".pdf,.doc,.docx"
+        disabled={!address}
         onChange={(e) => setFile(e.target.files?.[0] || null)}
-        className="w-full text-sm"
+        className={`w-full text-sm ${
+          !address ? "opacity-50 cursor-not-allowed" : ""
+        }`}
       />
+
 
       {address && file && (
         <div className="bg-slate-50 p-3 rounded text-sm text-slate-700">
