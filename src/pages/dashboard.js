@@ -4,6 +4,18 @@ import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/router";
 import { Auth } from "aws-amplify";
 
+/* =========================
+   STAGE CONFIG (OPEN-ENDED)
+========================= */
+
+const STAGE_ORDER = [
+  "UPLOADED",
+  "EMD_COLLECTED",
+  "CONTINGENCIES",
+  "CLOSED",
+  "COMMISSION",
+];
+
 const STAGE_LABELS = {
   UPLOADED: "Uploaded",
   EMD_COLLECTED: "Collect EMD",
@@ -20,6 +32,45 @@ const NEXT_STAGES = {
   COMMISSION: [],
 };
 
+const EMD_OPTIONS = [
+  { value: "IKON_REALTY", label: "Ikon Realty" },
+  { value: "LOUDOUN_TITLE", label: "Loudoun Title" },
+  { value: "OTHER", label: "Other" },
+];
+
+const EMD_LINKS = {
+  IKON_REALTY: [
+    {
+      label: "Ikon Realty Earnnest",
+      url: "https://payments.earnnest.com/ikonrealtyashburn/send/304",
+    },
+  ],
+  LOUDOUN_TITLE: [
+    {
+      label: "Loudoun Title VA Escrow",
+      url: "https://payments.earnnest.com/loudountitle/send/409",
+    },
+    {
+      label: "Loudoun Title MD Escrow",
+      url: "https://payments.earnnest.com/loudountitle/send/102999",
+    },
+  ],
+};
+
+const CONTINGENCY_TYPES = [
+  { value: "HOME_INSPECTION", label: "Home Inspection" },
+  { value: "FINANCE", label: "Finance" },
+  { value: "APPRAISAL", label: "Appraisal" },
+  { value: "OTHER", label: "Other" },
+];
+
+const getNextStage = (stage) =>
+  NEXT_STAGES[stage]?.[0] || "";
+
+/* =========================
+   COMPONENT
+========================= */
+
 export default function DashboardPage({ user, signOut }) {
   const router = useRouter();
 
@@ -27,28 +78,26 @@ export default function DashboardPage({ user, signOut }) {
   const [files, setFiles] = useState([]);
   const [filter, setFilter] = useState("latest");
 
+  // Stage modal state
   const [stageModalOpen, setStageModalOpen] = useState(false);
-  const [selected, setSelected] = useState(null); // { contractId, fileName, stage }
+  const [selected, setSelected] = useState(null);
   const [nextStage, setNextStage] = useState("");
+  const [stageForm, setStageForm] = useState({});
+
+  /* =========================
+     LOAD PROFILE
+  ========================= */
 
   useEffect(() => {
-    async function loadAttributes() {
-      try {
-        const cognitoUser = await Auth.currentAuthenticatedUser();
-        setProfile(cognitoUser.attributes);
-      } catch (err) {
-        console.error("Error loading user attributes:", err);
-      }
-    }
-    loadAttributes();
+    Auth.currentAuthenticatedUser()
+      .then((u) => setProfile(u.attributes))
+      .catch(console.error);
   }, []);
 
-  const given = profile?.given_name || "";
-  const family = profile?.family_name || "";
-  const email = profile?.email || "";
-
   const fullName =
-    given && family ? `${given} ${family}` : email ? email.split("@")[0] : "Agent";
+    profile?.given_name && profile?.family_name
+      ? `${profile.given_name} ${profile.family_name}`
+      : profile?.email?.split("@")[0] || "Agent";
 
   const today = new Date().toLocaleDateString("en-US", {
     year: "numeric",
@@ -56,80 +105,55 @@ export default function DashboardPage({ user, signOut }) {
     day: "numeric",
   });
 
+  /* =========================
+     FETCH CONTRACTS
+  ========================= */
+
   const fetchContracts = async () => {
     try {
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
-
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/contracts`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
-
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-
       const data = await res.json();
-      const normalized =
-        data.files ||
-        (Array.isArray(data.items)
-          ? data.items.map((i) => ({
-              key: i.s3Key,
-              lastModified: i.createdAt,
-              url: i.url || null,
-              stage: i.stage || "UPLOADED",
-              contractId: i.contractId,
-              fileName: i.fileName,
-            }))
-          : []);
-
-      setFiles(normalized);
+      setFiles(data.files || []);
     } catch (err) {
       console.error("Error fetching contracts:", err);
     }
   };
 
   useEffect(() => {
-    if (!user) return;
-    fetchContracts();
+    if (user) fetchContracts();
   }, [user]);
 
+  /* =========================
+     SORT & FILTER
+  ========================= */
+
   const sorted = useMemo(
-    () => [...files].sort((a, b) => new Date(b.lastModified) - new Date(a.lastModified)),
+    () =>
+      [...files].sort(
+        (a, b) =>
+          new Date(b.lastModified) - new Date(a.lastModified)
+      ),
     [files]
   );
 
-  const now = new Date();
   let filteredFiles = sorted;
 
-  if (filter === "month") {
-    filteredFiles = sorted.filter((f) => {
-      const dt = new Date(f.lastModified);
-      return dt.getMonth() === now.getMonth() && dt.getFullYear() === now.getFullYear();
-    });
-  }
-  if (filter === "3months") {
-    const limit = new Date();
-    limit.setMonth(limit.getMonth() - 3);
-    filteredFiles = sorted.filter((f) => new Date(f.lastModified) >= limit);
-  }
-  if (filter === "6months") {
-    const limit = new Date();
-    limit.setMonth(limit.getMonth() - 6);
-    filteredFiles = sorted.filter((f) => new Date(f.lastModified) >= limit);
-  }
-  if (filter === "ytd") {
-    filteredFiles = sorted.filter(
-      (f) => new Date(f.lastModified).getFullYear() === now.getFullYear()
-    );
-  }
+  /* =========================
+     STAGE MODAL HANDLERS
+  ========================= */
 
   const openStageModal = (f) => {
     const stage = f.stage || "UPLOADED";
-    const choices = NEXT_STAGES[stage] || [];
     setSelected({
       contractId: f.contractId,
-      fileName: f.fileName || f.key?.split("/")?.pop() || "Contract",
+      fileName: f.fileName,
       stage,
     });
-    setNextStage(choices[0] || "");
+    setNextStage(getNextStage(stage));
+    setStageForm({});
     setStageModalOpen(true);
   };
 
@@ -137,6 +161,7 @@ export default function DashboardPage({ user, signOut }) {
     setStageModalOpen(false);
     setSelected(null);
     setNextStage("");
+    setStageForm({});
   };
 
   const saveStage = async () => {
@@ -146,6 +171,8 @@ export default function DashboardPage({ user, signOut }) {
       const session = await Auth.currentSession();
       const idToken = session.getIdToken().getJwtToken();
 
+      const savedStage = nextStage;
+
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/contracts/${selected.contractId}/stage`,
         {
@@ -154,151 +181,212 @@ export default function DashboardPage({ user, signOut }) {
             Authorization: `Bearer ${idToken}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ stage: nextStage }),
+          body: JSON.stringify({
+            stage: savedStage,
+            stageData: stageForm,
+          }),
         }
       );
 
-      if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(txt || `Stage update failed (${res.status})`);
-      }
+      if (!res.ok) throw new Error("Stage update failed");
 
-      closeStageModal();
       await fetchContracts();
-    } catch (e) {
-      console.error(e);
-      alert("Unable to update stage. Please try again.");
+
+      // 🔥 AUTO-ADVANCE
+      const autoNext = getNextStage(savedStage);
+
+      if (autoNext) {
+        setSelected((prev) => ({
+          ...prev,
+          stage: savedStage,
+        }));
+        setNextStage(autoNext);
+        setStageForm({});
+        setStageModalOpen(true);
+      } else {
+        closeStageModal();
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Unable to update stage.");
     }
   };
 
+  /* =========================
+     RENDER
+  ========================= */
+
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white shadow-xl p-10 rounded-xl w-full max-w-3xl space-y-8 animate-fade-in">
-        <div className="text-center space-y-2">
-          <h1 className="text-3xl font-bold text-slate-800">Welcome {fullName}</h1>
+      <div className="bg-white shadow-xl p-10 rounded-xl w-full max-w-3xl space-y-8">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold">Welcome {fullName}</h1>
           <p className="text-slate-600">Today is {today}</p>
         </div>
 
         <button
           onClick={() => router.push("/upload")}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-blue-700 transition"
+          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold"
         >
           Upload Contract
         </button>
 
-        <div>
-          <h2 className="text-xl font-bold text-slate-800 mb-3">Browse Your Contracts</h2>
-
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-full border px-3 py-2 rounded mb-4"
-          >
-            <option value="latest">Latest (Default)</option>
-            <option value="month">This Month</option>
-            <option value="3months">Last 3 Months</option>
-            <option value="6months">Last 6 Months</option>
-            <option value="ytd">Year to Date</option>
-            <option value="all">All Files</option>
-          </select>
-
-          {filteredFiles.length === 0 ? (
-            <p className="text-slate-500">No files found for this filter.</p>
-          ) : (
-            <div className="space-y-2">
-              {filteredFiles.map((f) => (
-                <div
-                  key={f.key}
-                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-slate-50 p-3 rounded-lg border hover:bg-slate-100"
+        {/* CONTRACT LIST */}
+        <div className="space-y-2">
+          {filteredFiles.map((f) => (
+            <div
+              key={f.key}
+              className="flex justify-between items-center bg-slate-50 p-3 rounded border"
+            >
+              <div>
+                <a
+                  href={f.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-blue-600 underline"
                 >
-                  <div className="flex flex-col">
-                    <a
-                      href={f.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-blue-600 hover:underline"
-                    >
-                      {(f.fileName || f.key.split("/").pop())}
-                    </a>
-                    <div className="text-xs text-slate-500">
-                      {new Date(f.lastModified).toLocaleDateString()}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs px-2 py-1 rounded bg-slate-200 text-slate-700">
-                      {STAGE_LABELS[f.stage || "UPLOADED"] || (f.stage || "UPLOADED")}
-                    </span>
-
-                    <button
-                      onClick={() => openStageModal(f)}
-                      className="text-sm px-3 py-2 rounded bg-slate-800 text-white hover:bg-slate-900"
-                    >
-                      Update Stage
-                    </button>
-                  </div>
+                  {f.fileName}
+                </a>
+                <div className="text-xs text-slate-500">
+                  {new Date(f.lastModified).toLocaleDateString()}
                 </div>
-              ))}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs px-2 py-1 rounded bg-slate-200">
+                  {STAGE_LABELS[f.stage]}
+                </span>
+                <button
+                  onClick={() => openStageModal(f)}
+                  className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+                >
+                  Update Stage
+                </button>
+              </div>
             </div>
-          )}
+          ))}
         </div>
 
         <button
           onClick={signOut}
-          className="w-full bg-slate-800 text-white py-3 rounded-lg text-lg font-semibold hover:bg-slate-900 transition"
+          className="w-full bg-slate-800 text-white py-3 rounded-lg"
         >
           Sign Out
         </button>
 
-        {/* Stage Modal */}
+        {/* =========================
+            STAGE MODAL
+        ========================= */}
         {stageModalOpen && selected && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-lg p-6 space-y-4">
+            <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4">
+
+              {/* Header */}
               <div>
-                <div className="text-lg font-bold text-slate-800">Update Stage</div>
-                <div className="text-sm text-slate-600">{selected.fileName}</div>
+                <h3 className="text-lg font-bold">Update Stage</h3>
+                <p className="text-sm text-slate-600">
+                  {selected.fileName}
+                </p>
               </div>
 
-              <div className="text-sm">
-                Current:{" "}
-                <span className="font-semibold">
-                  {STAGE_LABELS[selected.stage] || selected.stage}
-                </span>
+              {/* Progress Indicator */}
+              <div className="flex gap-1 text-xs">
+                {STAGE_ORDER.map((s, idx) => {
+                  const done =
+                    STAGE_ORDER.indexOf(selected.stage) >= idx;
+                  return (
+                    <div
+                      key={s}
+                      className={`flex-1 text-center py-1 rounded ${
+                        done
+                          ? "bg-green-100 text-green-700"
+                          : "bg-slate-100 text-slate-400"
+                      }`}
+                    >
+                      {idx + 1}. {STAGE_LABELS[s]}
+                    </div>
+                  );
+                })}
               </div>
 
-              <div className="space-y-2">
-                <label className="text-sm text-slate-700 font-semibold">
-                  Next stage
-                </label>
-                <select
-                  value={nextStage}
-                  onChange={(e) => setNextStage(e.target.value)}
-                  className="w-full border px-3 py-2 rounded"
-                  disabled={(NEXT_STAGES[selected.stage] || []).length === 0}
-                >
-                  {(NEXT_STAGES[selected.stage] || []).length === 0 ? (
-                    <option>No further stages</option>
-                  ) : (
-                    (NEXT_STAGES[selected.stage] || []).map((s) => (
-                      <option key={s} value={s}>
-                        {STAGE_LABELS[s] || s}
+              {/* EMD FORM */}
+              {nextStage === "EMD_COLLECTED" && (
+                <div className="space-y-2">
+                  <select
+                    className="w-full border px-3 py-2 rounded"
+                    onChange={(e) =>
+                      setStageForm({ holder: e.target.value })
+                    }
+                  >
+                    <option value="">EMD Held By</option>
+                    {EMD_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
                       </option>
-                    ))
-                  )}
-                </select>
-              </div>
+                    ))}
+                  </select>
 
-              <div className="flex justify-end gap-2 pt-2">
+                  {EMD_LINKS[stageForm.holder] && (
+                    <div className="space-y-1 text-sm">
+                      {EMD_LINKS[stageForm.holder].map((l) => (
+                        <a
+                          key={l.url}
+                          href={l.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline block"
+                        >
+                          {l.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* CONTINGENCIES FORM */}
+              {nextStage === "CONTINGENCIES" && (
+                <div className="space-y-2">
+                  {CONTINGENCY_TYPES.map((c) => (
+                    <label key={c.value} className="flex gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        onChange={(e) =>
+                          setStageForm((prev) => {
+                            const set = new Set(prev.types || []);
+                            e.target.checked
+                              ? set.add(c.value)
+                              : set.delete(c.value);
+                            return { ...prev, types: Array.from(set) };
+                          })
+                        }
+                      />
+                      {c.label}
+                    </label>
+                  ))}
+                  <input
+                    className="w-full border px-3 py-2 rounded"
+                    placeholder="Other notes"
+                    onChange={(e) =>
+                      setStageForm((prev) => ({
+                        ...prev,
+                        notes: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              )}
+
+              {/* Buttons */}
+              <div className="flex justify-end gap-2 pt-3">
                 <button
                   onClick={closeStageModal}
-                  className="px-4 py-2 rounded border"
+                  className="px-4 py-2 border rounded"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={saveStage}
-                  disabled={!nextStage}
-                  className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  className="px-4 py-2 bg-blue-600 text-white rounded"
                 >
                   Save
                 </button>
@@ -306,7 +394,6 @@ export default function DashboardPage({ user, signOut }) {
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
