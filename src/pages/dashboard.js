@@ -52,14 +52,30 @@ export default function DashboardPage({ user, signOut }) {
           `${process.env.NEXT_PUBLIC_API_URL}/contracts`,
           {
             headers: {
-              Authorization: idToken,
+              Authorization: `Bearer ${idToken}`,
             },
           }
         );
 
+        if (!res.ok) {
+          throw new Error(`API error ${res.status}`);
+        }
+
         const data = await res.json();
         console.log("CONTRACT RESPONSE:", data);
-        setFiles(data.files || []);
+
+        // Normalize backend response → S3-style frontend contract
+        const files =
+          data.files ||
+          (Array.isArray(data.items)
+            ? data.items.map((i) => ({
+                key: i.s3Key,
+                lastModified: i.createdAt,
+                url: i.url || null,
+              }))
+            : []);
+
+        setFiles(files);
       } catch (err) {
         console.error("Error fetching contracts:", err);
       }

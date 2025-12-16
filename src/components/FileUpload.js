@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { Auth } from "aws-amplify";
 import toast from "react-hot-toast";
+import AddressSearch from "./AddressSearch";
 
 export default function FileUpload() {
   const [file, setFile] = useState(null);
+  const [address, setAddress] = useState(null);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
 
@@ -16,7 +18,23 @@ export default function FileUpload() {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ];
 
-  const validate = (f) => {
+const safePart = (s) =>
+  (s || "").replace(/\s+/g, " ").replace(/[^a-zA-Z0-9 .-]/g, "").trim();
+
+const generateFilename = (addr, originalName) => {
+  const ext = originalName.split(".").pop();
+  const streetNumber = String(addr?.streetNumber || "").replace(/\D/g, "");
+  const streetName = safePart(addr?.streetName);
+  return `${streetNumber} ${streetName} Contract.${ext}`;
+};
+
+const validate = (f) => {
+
+    if (!address) {
+      toast.error("Please search and select a property address (VA/MD/DC)");
+      return false;
+    }
+
     if (!f) {
       toast.error("Please choose a file");
       return false;
@@ -55,13 +73,14 @@ export default function FileUpload() {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/presign`, {
         method: "POST",
         headers: {
-          Authorization: idToken,
+          Authorization: `Bearer ${idToken}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          filename: file.name,
+          filename: generateFilename(address, file.name),
           contentType: file.type,
           fileSize: file.size,
+          address,
         }),
       });
 
@@ -117,6 +136,8 @@ export default function FileUpload() {
 
   return (
     <div className="space-y-4">
+      <AddressSearch value={address} onChange={setAddress} />
+
       <input
         type="file"
         accept=".pdf,.doc,.docx"
@@ -124,7 +145,15 @@ export default function FileUpload() {
         className="w-full text-sm"
       />
 
-      {progress > 0 && (
+      {address && file && (
+  <div className="bg-slate-50 p-3 rounded text-sm text-slate-700">
+    <div className="text-xs text-slate-500">S3 file name</div>
+    <div className="font-semibold">{generateFilename(address, file.name)}</div>
+  </div>
+)}
+
+{progress > 0 && (
+
         <div className="bg-gray-200 h-2 w-full rounded">
           <div
             className="bg-blue-600 h-2 rounded"
@@ -135,7 +164,7 @@ export default function FileUpload() {
 
       <button
         onClick={upload}
-        disabled={uploading}
+        disabled={uploading || !address || !file}
         className={`w-full px-4 py-2 rounded text-white ${
           uploading
             ? "bg-blue-400 cursor-not-allowed"
