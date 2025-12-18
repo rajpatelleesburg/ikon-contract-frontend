@@ -16,13 +16,21 @@ const ALLOWED = [
 const LICENSED = ["VA", "MD", "DC"];
 
 const safePart = (s) =>
-  (s || "").replace(/\s+/g, " ").replace(/[^a-zA-Z0-9 .-]/g, "").trim();
+  (s || "")
+    .replace(/\s+/g, " ")
+    .replace(/[^a-zA-Z0-9 .-]/g, "")
+    .trim();
 
+/**
+ * ✅ Filename format:
+ * 5032 Canvasback Ct (MD) Contract.pdf
+ */
 const generateFilename = (addr, originalName) => {
   const ext = (originalName.split(".").pop() || "pdf").toLowerCase();
   const streetNumber = String(addr?.streetNumber || "").replace(/\D/g, "");
   const streetName = safePart(addr?.streetName);
-  return `${streetNumber} ${streetName} Contract.${ext}`;
+  const state = addr?.state ? ` (${addr.state})` : "";
+  return `${streetNumber} ${streetName}${state} Contract.${ext}`;
 };
 
 // ✅ S3 ChecksumSHA256 expects BASE64(SHA256(bytes))
@@ -89,7 +97,7 @@ export default function FileUpload() {
 
       // Request presigned URL
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_PRESIGN_API_URL}/presign`,
+        `${process.env.NEXT_PUBLIC__API_URL}/presign`,
         {
           method: "POST",
           headers: {

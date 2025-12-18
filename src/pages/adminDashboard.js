@@ -419,21 +419,34 @@ export default function AdminDashboard({ user, signOut }) {
 
   const confirmDeleteFile = async () => {
     if (!deleteTarget) return;
+
     try {
-      const idToken = user?.signInUserSession?.idToken?.jwtToken;
+      // ✅ ALWAYS get a fresh token
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
+
       const key = deleteTarget.file.key;
 
+      // ✅ Encode path segments individually (keeps "/" working)
+      const encodedKey = key
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${encodeURIComponent(
-          key
-        )}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${encodedKey}`,
         {
           method: "DELETE",
-          headers: { Authorization: `Bearer ${idToken}` },
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
         }
       );
 
-      if (!res.ok) throw new Error("Delete failed");
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`Delete failed (${res.status}): ${text}`);
+      }
 
       await fetchContracts();
       toast.success("File deleted");
@@ -445,6 +458,7 @@ export default function AdminDashboard({ user, signOut }) {
       closeDeleteModal();
     }
   };
+
 
   useEffect(() => {
     if (bulkConfirmText === "DELETE" && showBulkModal) {
@@ -482,7 +496,8 @@ export default function AdminDashboard({ user, signOut }) {
 
     try {
       setBulkInProgress(true);
-      const idToken = user?.signInUserSession?.idToken?.jwtToken;
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
 
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-delete?years=${bulkYears}`,

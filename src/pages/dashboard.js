@@ -5,7 +5,7 @@ import { useRouter } from "next/router";
 import { Auth } from "aws-amplify";
 
 /* =========================
-   STAGE CONFIG (OPEN-ENDED)
+   STAGE CONFIG
 ========================= */
 
 const STAGE_ORDER = [
@@ -32,11 +32,11 @@ const NEXT_STAGES = {
   COMMISSION: [],
 };
 
-const EMD_OPTIONS = [
-  { value: "IKON_REALTY", label: "Ikon Realty" },
-  { value: "LOUDOUN_TITLE", label: "Loudoun Title" },
-  { value: "OTHER", label: "Other" },
-];
+const getNextStage = (stage) => NEXT_STAGES[stage]?.[0] || "";
+
+/* =========================
+   EMD CONFIG
+========================= */
 
 const EMD_LINKS = {
   IKON_REALTY: [
@@ -45,11 +45,13 @@ const EMD_LINKS = {
       url: "https://payments.earnnest.com/ikonrealtyashburn/send/304",
     },
   ],
-  LOUDOUN_TITLE: [
+  LOUDOUN_TITLE_VA: [
     {
       label: "Loudoun Title VA Escrow",
       url: "https://payments.earnnest.com/loudountitle/send/409",
     },
+  ],
+  LOUDOUN_TITLE_MD: [
     {
       label: "Loudoun Title MD Escrow",
       url: "https://payments.earnnest.com/loudountitle/send/102999",
@@ -64,8 +66,66 @@ const CONTINGENCY_TYPES = [
   { value: "OTHER", label: "Other" },
 ];
 
-const getNextStage = (stage) =>
-  NEXT_STAGES[stage]?.[0] || "";
+/* =========================
+   HELPERS
+========================= */
+
+const getPropertyStateSafe = (address) => {
+  if (!address) return null;
+  if (address.state === "VA") return "VA";
+  if (address.state === "MD") return "MD";
+  if (address.state === "DC") return "DC";
+  return null;
+};
+
+const filterFilesByView = (files, view) => {
+  const now = new Date();
+
+  const isSameMonth = (d) =>
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear();
+
+  const startOfQuarter = new Date(
+    now.getFullYear(),
+    Math.floor(now.getMonth() / 3) * 3,
+    1
+  );
+
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+
+  switch (view) {
+    case "recent":
+      return [...files]
+        .sort(
+          (a, b) =>
+            new Date(b.lastModified) - new Date(a.lastModified)
+        )
+        .slice(0, 3);
+
+    case "month":
+      return files.filter((f) =>
+        isSameMonth(new Date(f.lastModified))
+      );
+
+    case "quarter":
+      return files.filter(
+        (f) => new Date(f.lastModified) >= startOfQuarter
+      );
+
+    case "year":
+      return files.filter(
+        (f) => new Date(f.lastModified) >= startOfYear
+      );
+
+    case "older":
+      return files.filter(
+        (f) => new Date(f.lastModified) < startOfYear
+      );
+
+    default:
+      return files;
+  }
+};
 
 /* =========================
    COMPONENT
@@ -76,13 +136,14 @@ export default function DashboardPage({ user, signOut }) {
 
   const [profile, setProfile] = useState(null);
   const [files, setFiles] = useState([]);
-  const [filter, setFilter] = useState("latest");
 
-  // Stage modal state
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [nextStage, setNextStage] = useState("");
   const [stageForm, setStageForm] = useState({});
+
+  // ✅ NEW: view filter
+  const [viewFilter, setViewFilter] = useState("recent");
 
   /* =========================
      LOAD PROFILE
@@ -99,47 +160,47 @@ export default function DashboardPage({ user, signOut }) {
       ? `${profile.given_name} ${profile.family_name}`
       : profile?.email?.split("@")[0] || "Agent";
 
-  const today = new Date().toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-
   /* =========================
      FETCH CONTRACTS
   ========================= */
 
   const fetchContracts = async () => {
     try {
-      const idToken = user?.signInUserSession?.idToken?.jwtToken;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/contracts`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
+      const session = await Auth.currentSession();
+      const accessToken = session
+        .getAccessToken()
+        .getJwtToken();
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/contracts/user`,
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error(`Failed: ${res.status}`);
+      }
+
       const data = await res.json();
-      setFiles(data.files || []);
+      setFiles(data || []);
     } catch (err) {
       console.error("Error fetching contracts:", err);
     }
   };
 
+
   useEffect(() => {
     if (user) fetchContracts();
   }, [user]);
 
-  /* =========================
-     SORT & FILTER
-  ========================= */
-
-  const sorted = useMemo(
-    () =>
-      [...files].sort(
-        (a, b) =>
-          new Date(b.lastModified) - new Date(a.lastModified)
-      ),
-    [files]
+  const visibleFiles = useMemo(
+    () => filterFilesByView(files, viewFilter),
+    [files, viewFilter]
   );
-
-  let filteredFiles = sorted;
 
   /* =========================
      STAGE MODAL HANDLERS
@@ -151,6 +212,7 @@ export default function DashboardPage({ user, signOut }) {
       contractId: f.contractId,
       fileName: f.fileName,
       stage,
+      address: f.address || f.stageData?.address || {},
     });
     setNextStage(getNextStage(stage));
     setStageForm({});
@@ -169,8 +231,8 @@ export default function DashboardPage({ user, signOut }) {
 
     try {
       const session = await Auth.currentSession();
-      const idToken = session.getIdToken().getJwtToken();
-
+      //const idToken = session.getIdToken().getJwtToken();
+      const accessToken = session.getAccessToken().getJwtToken();
       const savedStage = nextStage;
 
       const res = await fetch(
@@ -178,7 +240,7 @@ export default function DashboardPage({ user, signOut }) {
         {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${idToken}`,
+            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -192,14 +254,9 @@ export default function DashboardPage({ user, signOut }) {
 
       await fetchContracts();
 
-      // 🔥 AUTO-ADVANCE
       const autoNext = getNextStage(savedStage);
-
       if (autoNext) {
-        setSelected((prev) => ({
-          ...prev,
-          stage: savedStage,
-        }));
+        setSelected((prev) => ({ ...prev, stage: savedStage }));
         setNextStage(autoNext);
         setStageForm({});
         setStageModalOpen(true);
@@ -218,11 +275,11 @@ export default function DashboardPage({ user, signOut }) {
 
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white shadow-xl p-10 rounded-xl w-full max-w-3xl space-y-8">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold">Welcome {fullName}</h1>
-          <p className="text-slate-600">Today is {today}</p>
-        </div>
+      <div className="bg-white shadow-xl p-10 rounded-xl w-full max-w-3xl space-y-6">
+
+        <h1 className="text-3xl font-bold text-center">
+          Welcome {fullName}
+        </h1>
 
         <button
           onClick={() => router.push("/upload")}
@@ -231,9 +288,28 @@ export default function DashboardPage({ user, signOut }) {
           Upload Contract
         </button>
 
+        {/* FILTER DROPDOWN */}
+        <div className="flex justify-between items-center">
+          <h2 className="text-sm font-semibold text-slate-700">
+            Contracts
+          </h2>
+
+          <select
+            value={viewFilter}
+            onChange={(e) => setViewFilter(e.target.value)}
+            className="border px-2 py-1 text-sm rounded"
+          >
+            <option value="recent">Recent Contracts</option>
+            <option value="month">This Month</option>
+            <option value="quarter">This Quarter</option>
+            <option value="year">This Year</option>
+            <option value="older">Older Contracts</option>
+          </select>
+        </div>
+
         {/* CONTRACT LIST */}
         <div className="space-y-2">
-          {filteredFiles.map((f) => (
+          {visibleFiles.map((f) => (
             <div
               key={f.key}
               className="flex justify-between items-center bg-slate-50 p-3 rounded border"
@@ -251,6 +327,7 @@ export default function DashboardPage({ user, signOut }) {
                   {new Date(f.lastModified).toLocaleDateString()}
                 </div>
               </div>
+
               <div className="flex items-center gap-3">
                 <span className="text-xs px-2 py-1 rounded bg-slate-200">
                   {STAGE_LABELS[f.stage]}
@@ -273,26 +350,17 @@ export default function DashboardPage({ user, signOut }) {
           Sign Out
         </button>
 
-        {/* =========================
-            STAGE MODAL
-        ========================= */}
+        {/* STAGE MODAL */}
         {stageModalOpen && selected && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4">
+              <h3 className="text-lg font-bold">
+                Update Stage — {STAGE_LABELS[selected.stage]}
+              </h3>
 
-              {/* Header */}
-              <div>
-                <h3 className="text-lg font-bold">Update Stage</h3>
-                <p className="text-sm text-slate-600">
-                  {selected.fileName}
-                </p>
-              </div>
-
-              {/* Progress Indicator */}
               <div className="flex gap-1 text-xs">
                 {STAGE_ORDER.map((s, idx) => {
-                  const done =
-                    STAGE_ORDER.indexOf(selected.stage) >= idx;
+                  const done = STAGE_ORDER.indexOf(selected.stage) >= idx;
                   return (
                     <div
                       key={s}
@@ -308,42 +376,52 @@ export default function DashboardPage({ user, signOut }) {
                 })}
               </div>
 
-              {/* EMD FORM */}
-              {nextStage === "EMD_COLLECTED" && (
-                <div className="space-y-2">
-                  <select
-                    className="w-full border px-3 py-2 rounded"
-                    onChange={(e) =>
-                      setStageForm({ holder: e.target.value })
-                    }
-                  >
-                    <option value="">EMD Held By</option>
-                    {EMD_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
+              {/* EMD */}
+              {nextStage === "EMD_COLLECTED" && (() => {
+                const state = getPropertyStateSafe(selected.address);
+
+                return (
+                  <div className="space-y-2">
+                    <select
+                      className="w-full border px-3 py-2 rounded"
+                      onChange={(e) =>
+                        setStageForm({ holder: e.target.value })
+                      }
+                    >
+                      <option value="">EMD Held By</option>
+                      <option value="IKON_REALTY">Ikon Realty</option>
+
+                      {state === "VA" && (
+                        <option value="LOUDOUN_TITLE_VA">
+                          Loudoun Title VA Escrow
+                        </option>
+                      )}
+
+                      {state === "MD" && (
+                        <option value="LOUDOUN_TITLE_MD">
+                          Loudoun Title MD Escrow
+                        </option>
+                      )}
+
+                      <option value="OTHER">Other</option>
+                    </select>
+
+                    {(EMD_LINKS[stageForm.holder] || []).map((l) => (
+                      <a
+                        key={l.url}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 underline block text-sm"
+                      >
+                        {l.label}
+                      </a>
                     ))}
-                  </select>
+                  </div>
+                );
+              })()}
 
-                  {EMD_LINKS[stageForm.holder] && (
-                    <div className="space-y-1 text-sm">
-                      {EMD_LINKS[stageForm.holder].map((l) => (
-                        <a
-                          key={l.url}
-                          href={l.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 underline block"
-                        >
-                          {l.label}
-                        </a>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* CONTINGENCIES FORM */}
+              {/* CONTINGENCIES */}
               {nextStage === "CONTINGENCIES" && (
                 <div className="space-y-2">
                   {CONTINGENCY_TYPES.map((c) => (
@@ -363,20 +441,58 @@ export default function DashboardPage({ user, signOut }) {
                       {c.label}
                     </label>
                   ))}
+                </div>
+              )}
+
+              {/* CLOSED */}
+              {nextStage === "CLOSED" && (
+                <div className="space-y-2">
                   <input
+                    type="date"
                     className="w-full border px-3 py-2 rounded"
-                    placeholder="Other notes"
                     onChange={(e) =>
-                      setStageForm((prev) => ({
-                        ...prev,
-                        notes: e.target.value,
+                      setStageForm((p) => ({
+                        ...p,
+                        closingDate: e.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    type="text"
+                    placeholder="Title Company Name"
+                    className="w-full border px-3 py-2 rounded"
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        titleCompany: e.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    type="number"
+                    placeholder="Commission Amount"
+                    className="w-full border px-3 py-2 rounded"
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        commissionAmount: e.target.value,
+                      }))
+                    }
+                  />
+                  <input
+                    type="number"
+                    placeholder="Admin Fee (optional)"
+                    className="w-full border px-3 py-2 rounded"
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        adminFee: e.target.value,
                       }))
                     }
                   />
                 </div>
               )}
 
-              {/* Buttons */}
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   onClick={closeStageModal}
@@ -391,6 +507,7 @@ export default function DashboardPage({ user, signOut }) {
                   Save
                 </button>
               </div>
+
             </div>
           </div>
         )}
