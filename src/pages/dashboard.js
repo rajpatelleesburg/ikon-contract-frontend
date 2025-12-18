@@ -78,7 +78,9 @@ const getPropertyStateSafe = (address) => {
   return null;
 };
 
-const filterFilesByView = (files, view) => {
+const filterFilesByView = (files = [], view) => {
+  if (!Array.isArray(files)) return [];
+
   const now = new Date();
 
   const isSameMonth = (d) =>
@@ -127,6 +129,7 @@ const filterFilesByView = (files, view) => {
   }
 };
 
+
 /* =========================
    COMPONENT
 ========================= */
@@ -136,7 +139,7 @@ export default function DashboardPage({ user, signOut }) {
 
   const [profile, setProfile] = useState(null);
   const [files, setFiles] = useState([]);
-
+  const [nextCursor, setNextCursor] = useState(null); 
   const [stageModalOpen, setStageModalOpen] = useState(false);
   const [selected, setSelected] = useState(null);
   const [nextStage, setNextStage] = useState("");
@@ -186,7 +189,11 @@ export default function DashboardPage({ user, signOut }) {
       }
 
       const data = await res.json();
-      setFiles(data || []);
+
+      //setFiles(data || []);
+      // NEW: backend returns { items, nextCursor }
+      setFiles(Array.isArray(data.items) ? data.items : []);
+      setNextCursor(data.nextCursor || null);
     } catch (err) {
       console.error("Error fetching contracts:", err);
     }
@@ -310,10 +317,7 @@ export default function DashboardPage({ user, signOut }) {
         {/* CONTRACT LIST */}
         <div className="space-y-2">
           {visibleFiles.map((f) => (
-            <div
-              key={f.key}
-              className="flex justify-between items-center bg-slate-50 p-3 rounded border"
-            >
+            <div key={f.contractId || f.s3Key} className="contract-row">
               <div>
                 <a
                   href={f.url}
