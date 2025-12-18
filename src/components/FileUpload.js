@@ -5,8 +5,14 @@ import { useRouter } from "next/router";
 import { Auth } from "aws-amplify";
 import toast from "react-hot-toast";
 import AddressSearch from "./AddressSearch";
+import { API_URL } from "../lib/apiConfig";
+
+/* =========================
+   CONSTANTS
+========================= */
 
 const MAX_MB = 30;
+
 const ALLOWED = [
   "application/pdf",
   "application/msword",
@@ -15,6 +21,10 @@ const ALLOWED = [
 
 const LICENSED = ["VA", "MD", "DC"];
 
+/* =========================
+   HELPERS
+========================= */
+
 const safePart = (s) =>
   (s || "")
     .replace(/\s+/g, " ")
@@ -22,8 +32,8 @@ const safePart = (s) =>
     .trim();
 
 /**
- * ✅ Filename format:
- * 5032 Canvasback Ct (MD) Contract.pdf
+ * Example:
+ * 17564 Kinloch Ridge Court (VA) Contract.pdf
  */
 const generateFilename = (addr, originalName) => {
   const ext = (originalName.split(".").pop() || "pdf").toLowerCase();
@@ -33,7 +43,7 @@ const generateFilename = (addr, originalName) => {
   return `${streetNumber} ${streetName}${state} Contract.${ext}`;
 };
 
-// ✅ S3 ChecksumSHA256 expects BASE64(SHA256(bytes))
+// BASE64(SHA256(bytes))
 const sha256Base64 = async (file) => {
   const buf = await file.arrayBuffer();
   const hash = await crypto.subtle.digest("SHA-256", buf);
@@ -42,6 +52,19 @@ const sha256Base64 = async (file) => {
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 };
+
+const session = await Auth.currentSession();
+const idToken = session.getIdToken().payload;
+
+const agentName =
+  idToken.given_name && idToken.family_name
+    ? `${idToken.given_name}-${idToken.family_name}`.replace(/\s+/g, "-")
+    : idToken.email?.split("@")[0];
+
+
+/* =========================
+   COMPONENT
+========================= */
 
 export default function FileUpload() {
   const router = useRouter();
@@ -82,44 +105,30 @@ export default function FileUpload() {
       setUploading(true);
       setProgress(0);
 
-      const user = await Auth.currentAuthenticatedUser();
-      const idToken = user?.signInUserSession?.idToken?.jwtToken;
+      // ✅ ALWAYS use ACCESS token for API calls
+      const session = await Auth.currentSession();
+      const accessToken = session.getAccessToken().getJwtToken();
 
-      if (!idToken) {
-        toast.error("Unable to read access token.");
-        setUploading(false);
-        return;
-      }
-
-      // ✅ compute checksum BEFORE presign request
-      const checksumSha256 = await sha256Base64(file);
+      //const checksumSha256 = await sha256Base64(file);
       const desiredName = generateFilename(address, file.name);
 
-      // Request presigned URL
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC__API_URL}/presign`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            filename: desiredName,
-            contentType: file.type,
-            fileSize: file.size,
-            checksumSha256,
-            address,
-          }),
-        }
-      );
+      // 1️⃣ Request presigned URL
+      const res = await fetch(`${API_URL}/presign`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          filename: desiredName,
+          contentType: file.type,
+          fileSize: file.size,
+          address,
+          agentName, // ✅ ADD THIS
+        }),
+      });
 
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
+      const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.url) {
         toast.error(data?.error || "Presign failed");
@@ -129,18 +138,15 @@ export default function FileUpload() {
 
       const { url, requiredHeaders } = data;
 
+      // 2️⃣ Upload directly to S3
       const xhr = new XMLHttpRequest();
       xhr.open("PUT", url);
 
-      if (requiredHeaders?.["x-amz-checksum-sha256"]) {
-        xhr.setRequestHeader(
-          "x-amz-checksum-sha256",
-          requiredHeaders["x-amz-checksum-sha256"]
-        );
-      }
-
       if (requiredHeaders?.["Content-Type"]) {
-        xhr.setRequestHeader("Content-Type", requiredHeaders["Content-Type"]);
+        xhr.setRequestHeader(
+          "Content-Type",
+          requiredHeaders["Content-Type"]
+        );
       }
 
       xhr.upload.onprogress = (e) => {
@@ -154,11 +160,7 @@ export default function FileUpload() {
           toast.success("Upload complete!");
           setProgress(0);
           setFile(null);
-
-          // ✅ Redirect back to Agent Dashboard
-          setTimeout(() => {
-            router.push("/dashboard");
-          }, 600);
+          setTimeout(() => router.push("/dashboard"), 600);
         } else {
           toast.error(`Upload failed (${xhr.status})`);
         }
@@ -173,7 +175,7 @@ export default function FileUpload() {
       xhr.send(file);
     } catch (err) {
       console.error("Upload error:", err);
-      toast.error("An unexpected error occurred during upload.");
+      toast.error("Unexpected error during upload.");
       setUploading(false);
     }
   };
