@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/router";
 import { Auth } from "aws-amplify";
+import dynamic from "next/dynamic";
 
 /* =========================
    STAGE CONFIG
@@ -72,81 +73,28 @@ const CONTINGENCY_TYPES = [
 
 const getPropertyStateSafe = (address) => {
   if (!address) return null;
-  if (address.state === "VA") return "VA";
-  if (address.state === "MD") return "MD";
-  if (address.state === "DC") return "DC";
-  return null;
+  return address.state || null;
 };
-
-const filterFilesByView = (files = [], view) => {
-  if (!Array.isArray(files)) return [];
-
-  const now = new Date();
-
-  const isSameMonth = (d) =>
-    d.getMonth() === now.getMonth() &&
-    d.getFullYear() === now.getFullYear();
-
-  const startOfQuarter = new Date(
-    now.getFullYear(),
-    Math.floor(now.getMonth() / 3) * 3,
-    1
-  );
-
-  const startOfYear = new Date(now.getFullYear(), 0, 1);
-
-  switch (view) {
-    case "recent":
-      return [...files]
-        .sort(
-          (a, b) =>
-            new Date(b.lastModified) - new Date(a.lastModified)
-        )
-        .slice(0, 3);
-
-    case "month":
-      return files.filter((f) =>
-        isSameMonth(new Date(f.lastModified))
-      );
-
-    case "quarter":
-      return files.filter(
-        (f) => new Date(f.lastModified) >= startOfQuarter
-      );
-
-    case "year":
-      return files.filter(
-        (f) => new Date(f.lastModified) >= startOfYear
-      );
-
-    case "older":
-      return files.filter(
-        (f) => new Date(f.lastModified) < startOfYear
-      );
-
-    default:
-      return files;
-  }
-};
-
 
 /* =========================
    COMPONENT
 ========================= */
 
-export default function DashboardPage({ user, signOut }) {
+function DashboardPage({ user, signOut }) {
   const router = useRouter();
 
   const [profile, setProfile] = useState(null);
-  const [files, setFiles] = useState([]);
-  const [nextCursor, setNextCursor] = useState(null); 
-  const [stageModalOpen, setStageModalOpen] = useState(false);
-  const [selected, setSelected] = useState(null);
-  const [nextStage, setNextStage] = useState("");
-  const [stageForm, setStageForm] = useState({});
 
-  // ✅ NEW: view filter
+  const [files, setFiles] = useState([]);
+  const [nextCursor, setNextCursor] = useState(null);
+
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const [viewFilter, setViewFilter] = useState("recent");
+  const [search, setSearch] = useState("");
+
+  const limit = viewFilter === "recent" ? 3 : 10;
 
   /* =========================
      LOAD PROFILE
@@ -167,61 +115,87 @@ export default function DashboardPage({ user, signOut }) {
      FETCH CONTRACTS
   ========================= */
 
-  const fetchContracts = async () => {
-    try {
-      const session = await Auth.currentSession();
-      const accessToken = session
-        .getAccessToken()
-        .getJwtToken();
+  const fetchContracts = useCallback(
+    async ({ cursor = null, append = false } = {}) => {
+      try {
+        append ? setLoadingMore(true) : setLoading(true);
 
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/contracts/user`,
-        {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+        const session = await Auth.currentSession();
+        const token = session.getAccessToken().getJwtToken();
 
-      if (!res.ok) {
-        throw new Error(`Failed: ${res.status}`);
+        const params = new URLSearchParams({
+          limit: String(limit),
+          view: viewFilter,
+        });
+
+        if (cursor) params.set("cursor", cursor);
+
+        const res = await fetch(
+          `${process.env.NEXT_PUBLIC_API_URL}/contracts/user?${params}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        if (!res.ok) throw new Error(`Failed: ${res.status}`);
+
+        const data = await res.json();
+        const items = Array.isArray(data.items) ? data.items : [];
+
+        setFiles((prev) => (append ? [...prev, ...items] : items));
+        setNextCursor(data.nextCursor || null);
+      } catch (err) {
+        console.error("Error fetching contracts:", err);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
       }
-
-      const data = await res.json();
-
-      //setFiles(data || []);
-      // NEW: backend returns { items, nextCursor }
-      setFiles(Array.isArray(data.items) ? data.items : []);
-      setNextCursor(data.nextCursor || null);
-    } catch (err) {
-      console.error("Error fetching contracts:", err);
-    }
-  };
-
-
-  useEffect(() => {
-    if (user) fetchContracts();
-  }, [user]);
-
-  const visibleFiles = useMemo(
-    () => filterFilesByView(files, viewFilter),
-    [files, viewFilter]
+    },
+    [limit, viewFilter]
   );
 
+  useEffect(() => {
+    if (!user) return;
+    setFiles([]);
+    setNextCursor(null);
+    fetchContracts({ append: false });
+  }, [user, viewFilter, fetchContracts]);
+
   /* =========================
-     STAGE MODAL HANDLERS
+     SEARCH FILTER (client-side)
   ========================= */
 
-  const openStageModal = (f) => {
-    const stage = f.stage || "UPLOADED";
-    setSelected({
-      contractId: f.contractId,
-      fileName: f.fileName,
-      stage,
-      address: f.address || f.stageData?.address || {},
+  const visibleFiles = useMemo(() => {
+    if (!search) return files;
+    const q = search.toLowerCase();
+    return files.filter((f) => {
+      const addr = f.address || {};
+      return (
+        f.fileName?.toLowerCase().includes(q) ||
+        `${addr.streetNumber || ""} ${addr.streetName || ""}`
+          .toLowerCase()
+          .includes(q) ||
+        addr.city?.toLowerCase().includes(q) ||
+        addr.state?.toLowerCase().includes(q)
+      );
     });
-    setNextStage(getNextStage(stage));
+  }, [files, search]);
+
+  /* =========================
+     STAGE MODAL
+  ========================= */
+
+  const [stageModalOpen, setStageModalOpen] = useState(false);
+  const [selected, setSelected] = useState(null);
+  const [nextStage, setNextStage] = useState("");
+  const [stageForm, setStageForm] = useState({});
+
+  const openStageModal = (f) => {
+    setSelected(f);
+    setNextStage(getNextStage(f.stage));
     setStageForm({});
     setStageModalOpen(true);
   };
@@ -233,25 +207,31 @@ export default function DashboardPage({ user, signOut }) {
     setStageForm({});
   };
 
+  /* =========================
+     OPTIMISTIC STAGE UPDATE
+  ========================= */
+
   const saveStage = async () => {
-    if (!selected?.contractId || !nextStage) return;
+    if (!selected || !nextStage) return;
+
+    const prevStage = selected.stage;
+    selected.stage = nextStage;
+    closeStageModal();
 
     try {
       const session = await Auth.currentSession();
-      //const idToken = session.getIdToken().getJwtToken();
-      const accessToken = session.getAccessToken().getJwtToken();
-      const savedStage = nextStage;
+      const token = session.getAccessToken().getJwtToken();
 
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/contracts/${selected.contractId}/stage`,
         {
           method: "PATCH",
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            stage: savedStage,
+            stage: nextStage,
             stageData: stageForm,
           }),
         }
@@ -259,19 +239,11 @@ export default function DashboardPage({ user, signOut }) {
 
       if (!res.ok) throw new Error("Stage update failed");
 
-      await fetchContracts();
-
-      const autoNext = getNextStage(savedStage);
-      if (autoNext) {
-        setSelected((prev) => ({ ...prev, stage: savedStage }));
-        setNextStage(autoNext);
-        setStageForm({});
-        setStageModalOpen(true);
-      } else {
-        closeStageModal();
-      }
+      fetchContracts();
     } catch (err) {
       console.error(err);
+      selected.stage = prevStage;
+      fetchContracts();
       alert("Unable to update stage.");
     }
   };
@@ -283,7 +255,6 @@ export default function DashboardPage({ user, signOut }) {
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <div className="bg-white shadow-xl p-10 rounded-xl w-full max-w-3xl space-y-6">
-
         <h1 className="text-3xl font-bold text-center">
           Welcome {fullName}
         </h1>
@@ -295,57 +266,88 @@ export default function DashboardPage({ user, signOut }) {
           Upload Contract
         </button>
 
-        {/* FILTER DROPDOWN */}
-        <div className="flex justify-between items-center">
-          <h2 className="text-sm font-semibold text-slate-700">
-            Contracts
-          </h2>
-
+        <div className="flex gap-2">
           <select
             value={viewFilter}
             onChange={(e) => setViewFilter(e.target.value)}
             className="border px-2 py-1 text-sm rounded"
           >
-            <option value="recent">Recent Contracts</option>
+            <option value="recent">Recent</option>
             <option value="month">This Month</option>
             <option value="quarter">This Quarter</option>
             <option value="year">This Year</option>
-            <option value="older">Older Contracts</option>
+            <option value="older">Older</option>
           </select>
+
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by address or filename"
+            className="flex-1 border px-3 py-1 rounded text-sm"
+          />
         </div>
 
-        {/* CONTRACT LIST */}
-        <div className="space-y-2">
-          {visibleFiles.map((f) => (
-            <div key={f.contractId || f.s3Key} className="contract-row">
-              <div>
-                <a
-                  href={f.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-blue-600 underline"
-                >
-                  {f.fileName}
-                </a>
-                <div className="text-xs text-slate-500">
-                  {new Date(f.lastModified).toLocaleDateString()}
+        {loading && (
+          <div className="space-y-2">
+            {[...Array(limit)].map((_, i) => (
+              <div
+                key={i}
+                className="h-14 bg-slate-100 animate-pulse rounded border"
+              />
+            ))}
+          </div>
+        )}
+
+        {!loading && (
+          <div className="space-y-2">
+            {visibleFiles.map((f) => (
+              <div
+                key={f.contractId}
+                className="flex justify-between items-center bg-slate-50 p-3 rounded border"
+              >
+                <div>
+                  <a
+                    href={f.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-600 underline"
+                  >
+                    {f.fileName}
+                  </a>
+                  <div className="text-xs text-slate-500">
+                    {f.lastModified
+                      ? new Date(f.lastModified).toLocaleDateString()
+                      : ""}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="text-xs px-2 py-1 rounded bg-slate-200">
+                    {STAGE_LABELS[f.stage]}
+                  </span>
+                  <button
+                    onClick={() => openStageModal(f)}
+                    className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+                  >
+                    Update Stage
+                  </button>
                 </div>
               </div>
+            ))}
+          </div>
+        )}
 
-              <div className="flex items-center gap-3">
-                <span className="text-xs px-2 py-1 rounded bg-slate-200">
-                  {STAGE_LABELS[f.stage]}
-                </span>
-                <button
-                  onClick={() => openStageModal(f)}
-                  className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
-                >
-                  Update Stage
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+        {!loading && nextCursor && (
+          <button
+            onClick={() =>
+              fetchContracts({ cursor: nextCursor, append: true })
+            }
+            disabled={loadingMore}
+            className="w-full border rounded py-2"
+          >
+            {loadingMore ? "Loading..." : "Load More"}
+          </button>
+        )}
 
         <button
           onClick={signOut}
@@ -380,10 +382,8 @@ export default function DashboardPage({ user, signOut }) {
                 })}
               </div>
 
-              {/* EMD */}
               {nextStage === "EMD_COLLECTED" && (() => {
                 const state = getPropertyStateSafe(selected.address);
-
                 return (
                   <div className="space-y-2">
                     <select
@@ -394,19 +394,16 @@ export default function DashboardPage({ user, signOut }) {
                     >
                       <option value="">EMD Held By</option>
                       <option value="IKON_REALTY">Ikon Realty</option>
-
                       {state === "VA" && (
                         <option value="LOUDOUN_TITLE_VA">
                           Loudoun Title VA Escrow
                         </option>
                       )}
-
                       {state === "MD" && (
                         <option value="LOUDOUN_TITLE_MD">
                           Loudoun Title MD Escrow
                         </option>
                       )}
-
                       <option value="OTHER">Other</option>
                     </select>
 
@@ -425,7 +422,6 @@ export default function DashboardPage({ user, signOut }) {
                 );
               })()}
 
-              {/* CONTINGENCIES */}
               {nextStage === "CONTINGENCIES" && (
                 <div className="space-y-2">
                   {CONTINGENCY_TYPES.map((c) => (
@@ -448,7 +444,6 @@ export default function DashboardPage({ user, signOut }) {
                 </div>
               )}
 
-              {/* CLOSED */}
               {nextStage === "CLOSED" && (
                 <div className="space-y-2">
                   <input
@@ -511,7 +506,6 @@ export default function DashboardPage({ user, signOut }) {
                   Save
                 </button>
               </div>
-
             </div>
           </div>
         )}
@@ -519,3 +513,11 @@ export default function DashboardPage({ user, signOut }) {
     </div>
   );
 }
+
+/* =========================
+   DISABLE SSR
+========================= */
+
+export default dynamic(() => Promise.resolve(DashboardPage), {
+  ssr: false,
+});
