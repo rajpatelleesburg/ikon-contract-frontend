@@ -1,4 +1,4 @@
-"use client";
+ "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/router";
@@ -31,28 +31,28 @@ const generateFilename = (
   const ext = (originalName.split(".").pop() || "pdf").toLowerCase();
   const streetNumber = String(addr?.streetNumber || "").replace(/\D/g, "");
   const streetName = safePart(addr?.streetName);
+  const city = safePart(addr?.city);
   const state = addr?.state ? ` (${addr.state})` : "";
-  const [w9File, setW9File] = useState(null); // Tenant broker W-9 (Rental only)
-  const generateRentalLeaseName = (addr) =>
-  generateFilename(addr, "lease.pdf", "RENTAL", false);
-
-  const generateRentalW9Name = (addr) =>
-    generateFilename(addr, "w9.pdf", "RENTAL", true);
-
-
 
   if (transactionType === "RENTAL") {
-    const suffix = tenantBrokerInvolved ? "Rental_W9" : "Rental";
-    return `${streetNumber} ${streetName}${state} ${suffix}.${ext}`;
+    const suffix = tenantBrokerInvolved ? "Rental_w9" : "Rental";
+    return `${streetNumber} ${streetName} ${city} ${state} ${suffix}.${ext}`;
   }
 
-  return `${streetNumber} ${streetName}${state} Contract.${ext}`;
+  return `${streetNumber} ${streetName}$ ${city} ${state} Contract.${ext}`;
 };
+
+const generateRentalLeaseName = (addr) =>
+  generateFilename(addr, "lease.pdf", "RENTAL", false);
+
+const generateRentalW9Name = (addr) =>
+  `${addr.streetNumber} ${safePart(addr.streetName)} ${safePart(addr.city)} (${addr.state}) Rental_w9.pdf`;
 
 export default function FileUpload() {
   const router = useRouter();
 
-  const [file, setFile] = useState(null);
+  const [file, setFile] = useState(null);      // Lease or Purchase contract
+  const [w9File, setW9File] = useState(null);  // Tenant broker W-9
   const [address, setAddress] = useState(null);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
@@ -60,43 +60,51 @@ export default function FileUpload() {
   const [transactionType, setTransactionType] = useState("");
   const [tenantBrokerInvolved, setTenantBrokerInvolved] = useState(null);
 
-  const validate = (f) => {
+  const validate = () => {
     if (!transactionType)
       return toast.error("Please select Purchase or Rental"), false;
 
     if (!address)
-      return toast.error(
-        "Please search and select a property address (VA/MD/DC)"
-      ), false;
+      return toast.error("Please search and select a property address (VA/MD/DC)"), false;
 
     if (!LICENSED.includes(address?.state))
       return toast.error("Only VA, MD, DC addresses are allowed."), false;
 
-    if (!f) return toast.error("Please choose a file"), false;
+    if (!file)
+      return toast.error(
+        transactionType === "RENTAL"
+          ? "Please upload the rental lease"
+          : "Please choose a file"
+      ), false;
 
-    if (f.size > MAX_MB * 1024 * 1024)
+    if (file.size > MAX_MB * 1024 * 1024)
       return toast.error("File must be less than 30 MB"), false;
 
-    if (!ALLOWED.includes(f.type))
+    if (!ALLOWED.includes(file.type))
       return toast.error("Only PDF, DOC, DOCX allowed"), false;
 
-    if (transactionType === "RENTAL" && tenantBrokerInvolved === null)
-      return toast.error(
-        "Please confirm if a tenant broker is involved"
-      ), false;
     if (transactionType === "RENTAL") {
-      if (!file)
-        return toast.error("Please upload the rental lease"), false;
+      if (tenantBrokerInvolved === null)
+        return toast.error("Please confirm if a tenant broker is involved"), false;
 
       if (tenantBrokerInvolved === true && !w9File)
         return toast.error("Please upload tenant broker W-9"), false;
+
+      if (tenantBrokerInvolved === true && w9File) {
+        if (w9File.size > MAX_MB * 1024 * 1024)
+          return toast.error("W-9 must be less than 30 MB"), false;
+
+        if (!ALLOWED.includes(w9File.type))
+          return toast.error("W-9 must be a PDF, DOC, or DOCX"), false;
+      }
     }
+
     return true;
   };
 
   const upload = async () => {
     try {
-      if (!validate(file)) return;
+      if (!validate()) return;
 
       setUploading(true);
       setProgress(0);
@@ -108,86 +116,72 @@ export default function FileUpload() {
       const idPayload = session.getIdToken().payload;
       const agentName =
         idPayload.given_name && idPayload.family_name
-          ? `${idPayload.given_name}-${idPayload.family_name}`.replace(
-              /\s+/g,
-              "-"
-            )
+          ? `${idPayload.given_name}-${idPayload.family_name}`.replace(/\s+/g, "-")
           : (idPayload.email || "").split("@")[0];
 
-      // 1️⃣ Upload rental lease
-      const leaseName =
+      const presignAndUpload = async (filename, fileToUpload) => {
+        const res = await fetch(`${API_URL}/presign`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            filename,
+            contentType: fileToUpload.type,
+            fileSize: fileToUpload.size,
+            address,
+            agentName,
+            transactionType,
+            tenantBrokerInvolved,
+          }),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data?.url) {
+          throw new Error(data?.message || "Presign failed");
+        }
+
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", data.url);
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable)
+              setProgress(Math.round((e.loaded / e.total) * 100));
+          };
+
+          xhr.onload = () =>
+            xhr.status === 200
+              ? resolve()
+              : reject(new Error(`Upload failed (${xhr.status})`));
+
+          xhr.onerror = () => reject(new Error("Upload error"));
+          xhr.send(fileToUpload);
+        });
+      };
+
+      // Upload lease or purchase contract
+      const primaryName =
         transactionType === "RENTAL"
           ? generateRentalLeaseName(address)
           : generateFilename(address, file.name, transactionType);
 
-      await presignAndUpload({
-        filename: leaseName,
-        file,
-      });
+      await presignAndUpload(primaryName, file);
 
-      // 2️⃣ Upload W-9 if required
+      // Upload W-9 if needed
       if (transactionType === "RENTAL" && tenantBrokerInvolved === true) {
         const w9Name = generateRentalW9Name(address);
-
-        await presignAndUpload({
-          filename: w9Name,
-          file: w9File,
-        });
+        await presignAndUpload(w9Name, w9File);
       }
 
-
-      const res = await fetch(`${API_URL}/presign`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          filename: desiredName,
-          contentType: file.type,
-          fileSize: file.size,
-          address,
-          agentName,
-          transactionType,
-          tenantBrokerInvolved,
-        }),
-      });
-
-      const data = await res.json().catch(() => null);
-
-      if (!res.ok || !data?.url) {
-        toast.error(data?.message || "Presign failed");
-        setUploading(false);
-        return;
-      }
-
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", data.url);
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable)
-          setProgress(Math.round((e.loaded / e.total) * 100));
-      };
-
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          toast.success("Upload complete!");
-          setTimeout(() => router.push("/dashboard"), 600);
-        } else {
-          toast.error(`Upload failed (${xhr.status})`);
-        }
-        setUploading(false);
-      };
-
-      xhr.onerror = () => {
-        toast.error("Upload error");
-        setUploading(false);
-      };
-
-      xhr.send(file);
+      toast.success("Upload complete!");
+      setTimeout(() => router.push("/dashboard"), 600);
     } catch (err) {
       console.error(err);
-      toast.error("Unexpected upload error");
+      toast.error(err.message || "Unexpected upload error");
+    } finally {
       setUploading(false);
     }
   };
@@ -209,6 +203,7 @@ export default function FileUpload() {
                 setTransactionType("PURCHASE");
                 setAddress(null);
                 setTenantBrokerInvolved(null);
+                setW9File(null);
               }}
             />
             Purchase
@@ -222,6 +217,7 @@ export default function FileUpload() {
                 setTransactionType("RENTAL");
                 setAddress(null);
                 setTenantBrokerInvolved(null);
+                setW9File(null);
               }}
             />
             Rental
@@ -291,7 +287,7 @@ export default function FileUpload() {
         </div>
       )}
 
-      {/* Purchase (unchanged behavior) */}
+      {/* Purchase */}
       {transactionType === "PURCHASE" && (
         <input
           type="file"
@@ -301,21 +297,12 @@ export default function FileUpload() {
         />
       )}
 
-
       {address && transactionType === "RENTAL" && (
         <div className="bg-slate-50 p-3 rounded text-sm space-y-1">
           <div className="text-xs text-slate-500">S3 file names</div>
-
-          {file && (
-            <div className="font-semibold">
-              {generateRentalLeaseName(address)}
-            </div>
-          )}
-
+          {file && <div className="font-semibold">{generateRentalLeaseName(address)}</div>}
           {tenantBrokerInvolved === true && w9File && (
-            <div className="font-semibold">
-              {generateRentalW9Name(address)}
-            </div>
+            <div className="font-semibold">{generateRentalW9Name(address)}</div>
           )}
         </div>
       )}
@@ -329,7 +316,6 @@ export default function FileUpload() {
         </div>
       )}
 
-
       <button
         onClick={upload}
         disabled={
@@ -338,11 +324,8 @@ export default function FileUpload() {
           !transactionType ||
           !file ||
           (transactionType === "RENTAL" && tenantBrokerInvolved === null) ||
-          (transactionType === "RENTAL" &&
-            tenantBrokerInvolved === true &&
-            !w9File)
+          (transactionType === "RENTAL" && tenantBrokerInvolved === true && !w9File)
         }
-
         className="w-full bg-blue-600 text-white py-2 rounded"
       >
         {uploading ? "Uploading..." : "Upload"}

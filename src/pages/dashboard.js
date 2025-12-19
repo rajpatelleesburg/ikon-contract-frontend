@@ -77,7 +77,10 @@ const getPropertyStateSafe = (address) => {
 };
 
 // 🔒 Rental guard – rentals do NOT participate in stages
-const isRental = (contract) => contract?.transactionType === "RENTAL";
+const isRental = (contract) =>
+  contract?.transactionType === "RENTAL" ||
+  contract?.fileName?.toLowerCase().includes(" rental");
+
 
 /* =========================
    COMPONENT
@@ -172,9 +175,15 @@ function DashboardPage({ user, signOut }) {
   ========================= */
 
   const visibleFiles = useMemo(() => {
-    if (!search) return files;
+    const base = files.filter((f) => {
+      // 🚫 Hide Rental W-9 from agent view
+      return !(f.fileName?.toLowerCase().includes("Rental_w9") || f.fileName?.toLowerCase().includes("Rentalw9"));
+    });
+
+    if (!search) return base;
+
     const q = search.toLowerCase();
-    return files.filter((f) => {
+    return base.filter((f) => {
       const addr = f.address || {};
       return (
         f.fileName?.toLowerCase().includes(q) ||
@@ -186,6 +195,7 @@ function DashboardPage({ user, signOut }) {
       );
     });
   }, [files, search]);
+
 
   /* =========================
      STAGE MODAL
@@ -326,25 +336,25 @@ function DashboardPage({ user, signOut }) {
                 </div>
                 
                 {!isRental(f) && (
-                <div className="flex items-center gap-3">
-                  <span className="text-xs px-2 py-1 rounded bg-slate-200">
-                    {STAGE_LABELS[f.stage]}
-                  </span>
-                  <button
-                    onClick={() => openStageModal(f)}
-                    className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
-                  >
-                    Update Stage
-                  </button>
-                </div>
-              )}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs px-2 py-1 rounded bg-slate-200">
+                      {STAGE_LABELS[f.stage]}
+                    </span>
+                    <button
+                      onClick={() => openStageModal(f)}
+                      className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+                    >
+                      Update Stage
+                    </button>
+                  </div>
+                )}
 
               </div>
             ))}
           </div>
         )}
 
-        {!loading && nextCursor && (
+        {!loading && nextCursor && visibleFiles.length >= limit && (
           <button
             onClick={() =>
               fetchContracts({ cursor: nextCursor, append: true })
@@ -355,6 +365,7 @@ function DashboardPage({ user, signOut }) {
             {loadingMore ? "Loading..." : "Load More"}
           </button>
         )}
+
 
         <button
           onClick={signOut}
