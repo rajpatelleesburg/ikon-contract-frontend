@@ -18,21 +18,15 @@ export default function App({ Component, pageProps }) {
   const router = useRouter();
   const path = router.pathname;
 
-  // Admin routes live at /admin and /adminDashboard
   const isAdminRoute = path === "/admin" || path === "/adminDashboard";
 
-  // Configure Amplify ONCE per route type (agent vs admin)
   useEffect(() => {
     const poolKey = isAdminRoute ? "admin" : "agent";
 
-    if (typeof window !== "undefined") {
-      if (window.__currentAmplifyPool !== poolKey) {
-        Amplify.configure(isAdminRoute ? awsAdminConfig : awsConfig);
-        window.__currentAmplifyPool = poolKey;
-      }
-    } else {
-      // SSR safety (rarely used here, but harmless)
+    // ✅ configure only in browser
+    if (window.__currentAmplifyPool !== poolKey) {
       Amplify.configure(isAdminRoute ? awsAdminConfig : awsConfig);
+      window.__currentAmplifyPool = poolKey;
     }
   }, [isAdminRoute]);
 

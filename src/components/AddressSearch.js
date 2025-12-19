@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import toast from "react-hot-toast";
 
 const LICENSED = ["VA", "MD", "DC"];
@@ -14,7 +14,12 @@ const clean = (s) =>
 export default function AddressSearch({ value, onChange }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
-  const canSearch = useMemo(() => q.trim().length >= 4, [q]);
+  const inputRef = useRef(null);
+
+  const canSearch = useMemo(
+    () => q.trim().length >= 4 && !value,
+    [q, value]
+  );
 
   useEffect(() => {
     const run = async () => {
@@ -24,12 +29,15 @@ export default function AddressSearch({ value, onChange }) {
       }
 
       try {
-        const res = await fetch(`/api/address/google?q=${encodeURIComponent(q)}`);
+        const res = await fetch(
+          `/api/address/google?q=${encodeURIComponent(q)}`
+        );
         const data = await res.json();
         setResults(Array.isArray(data?.results) ? data.results : []);
       } catch (e) {
         console.error(e);
         toast.error("Address search failed");
+        setResults([]);
       }
     };
 
@@ -43,7 +51,9 @@ export default function AddressSearch({ value, onChange }) {
       return;
     }
 
-    const streetNumber = String(r.streetNumber || "").replace(/\D/g, "").trim();
+    const streetNumber = String(r.streetNumber || "")
+      .replace(/\D/g, "")
+      .trim();
     const streetName = clean(r.streetName);
 
     if (!streetNumber || !streetName) {
@@ -59,15 +69,26 @@ export default function AddressSearch({ value, onChange }) {
       zip: r.zip,
     };
 
+    // ✅ Set selected value
     onChange(selected);
+
+    // ✅ Lock input to selected address
     setQ(`${streetNumber} ${streetName}, ${r.state}`);
+
+    // ✅ Clear suggestions immediately
     setResults([]);
+
+    // ✅ Blur input for clean UX
+    inputRef.current?.blur();
   };
 
   const clearSel = () => {
     onChange(null);
     setQ("");
     setResults([]);
+
+    // Allow typing again
+    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   return (
@@ -78,11 +99,18 @@ export default function AddressSearch({ value, onChange }) {
 
       <div className="relative">
         <input
+          ref={inputRef}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search: 123 Main St"
-          className="w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-slate-300"
+          disabled={!!value}
+          className={`w-full rounded border px-3 py-2 text-sm outline-none focus:ring-2 ${
+            value
+              ? "bg-slate-100 border-slate-200 text-slate-600 cursor-not-allowed"
+              : "border-slate-200 focus:ring-slate-300"
+          }`}
         />
+
         {value && (
           <button
             type="button"
@@ -94,8 +122,9 @@ export default function AddressSearch({ value, onChange }) {
         )}
       </div>
 
-      {results.length > 0 && (
-        <div className="rounded border border-slate-200 bg-white overflow-hidden">
+      {/* 🔽 Suggestions dropdown */}
+      {results.length > 0 && !value && (
+        <div className="relative z-20 rounded border border-slate-200 bg-white overflow-hidden shadow-sm">
           {results.map((r, i) => (
             <button
               key={i}
@@ -114,6 +143,7 @@ export default function AddressSearch({ value, onChange }) {
         </div>
       )}
 
+      {/* ✅ Selected address summary */}
       {value && (
         <div className="rounded bg-slate-50 p-3">
           <div className="text-xs text-slate-500">Stored format</div>

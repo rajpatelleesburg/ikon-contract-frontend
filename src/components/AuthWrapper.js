@@ -1,16 +1,20 @@
 // src/components/AuthWrapper.js
 "use client";
 
-import { Authenticator } from "@aws-amplify/ui-react";
-//import { Amplify } from "aws-amplify";
 import { useRouter } from "next/router";
-import awsExports from "../lib/awsConfig";
 import allowedAgents from "../lib/allowedAgents.json";
 import allowedPhones from "../lib/allowedPhones.json";
-import { useState } from "react";
 import { Toaster } from "react-hot-toast";
+import { useEffect, useState } from "react";
 
-//Amplify.configure(awsExports);
+import dynamic from "next/dynamic";
+
+const Authenticator = dynamic(
+  () =>
+    import("@aws-amplify/ui-react").then((m) => m.Authenticator),
+  { ssr: false }
+);
+
 
 /* =====================================================================================
    CustomSignUpForm
@@ -370,37 +374,27 @@ function CustomSignUpForm() {
 
 export default function AuthWrapper({ children }) {
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+
+  // 👇 This is the key
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // 🚫 SSR guard
+  if (!mounted) return null;
 
   return (
     <>
       <Toaster position="top-center" />
-
       <div className="min-h-screen flex items-center justify-center bg-slate-100 px-4">
         <div className="w-full max-w-lg animate-fade-in">
-          <Authenticator
-            components={{
-              SignUp: { FormFields: (props) => <CustomSignUpForm {...props} /> },
-            }}
-          >
+          <Authenticator>
             {(context) => {
               const { user, signOut } = context;
 
-              if (user) {
-                globalThis.lastUser = user;
-
-                const groups =
-                  user.signInUserSession?.idToken?.payload?.["cognito:groups"] ||
-                  [];
-                const adminGroup =
-                  process.env.NEXT_PUBLIC_BACKOFFICE_GROUP || "backoffice";
-
-                if (router.pathname === "/") {
-                  if (groups.includes(adminGroup)) {
-                    router.replace("/backoffice");
-                  } else {
-                    router.replace("/dashboard");
-                  }
-                }
+              if (user && router.pathname === "/") {
+                router.replace("/dashboard");
               }
 
               return children({ user, signOut });

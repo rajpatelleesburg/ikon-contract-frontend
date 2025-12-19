@@ -1,12 +1,13 @@
-"use client";
+ "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/router";
-import { Auth } from "aws-amplify";
 import toast from "react-hot-toast";
 import AddressSearch from "./AddressSearch";
+import { API_URL } from "../lib/apiConfig";
 
 const MAX_MB = 30;
+
 const ALLOWED = [
   "application/pdf",
   "application/msword",
@@ -16,200 +17,316 @@ const ALLOWED = [
 const LICENSED = ["VA", "MD", "DC"];
 
 const safePart = (s) =>
-  (s || "").replace(/\s+/g, " ").replace(/[^a-zA-Z0-9 .-]/g, "").trim();
+  (s || "")
+    .replace(/\s+/g, " ")
+    .replace(/[^a-zA-Z0-9 .-]/g, "")
+    .trim();
 
-const generateFilename = (addr, originalName) => {
+const generateFilename = (
+  addr,
+  originalName,
+  transactionType,
+  tenantBrokerInvolved
+) => {
   const ext = (originalName.split(".").pop() || "pdf").toLowerCase();
   const streetNumber = String(addr?.streetNumber || "").replace(/\D/g, "");
   const streetName = safePart(addr?.streetName);
-  return `${streetNumber} ${streetName} Contract.${ext}`;
+  const city = safePart(addr?.city);
+  const state = addr?.state ? ` (${addr.state})` : "";
+
+  if (transactionType === "RENTAL") {
+    const suffix = tenantBrokerInvolved ? "Rental_w9" : "Rental";
+    return `${streetNumber} ${streetName} ${city} ${state} ${suffix}.${ext}`;
+  }
+
+  return `${streetNumber} ${streetName}$ ${city} ${state} Contract.${ext}`;
 };
 
-// ✅ S3 ChecksumSHA256 expects BASE64(SHA256(bytes))
-const sha256Base64 = async (file) => {
-  const buf = await file.arrayBuffer();
-  const hash = await crypto.subtle.digest("SHA-256", buf);
-  const bytes = new Uint8Array(hash);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
-};
+const generateRentalLeaseName = (addr) =>
+  generateFilename(addr, "lease.pdf", "RENTAL", false);
+
+const generateRentalW9Name = (addr) =>
+  `${addr.streetNumber} ${safePart(addr.streetName)} ${safePart(addr.city)} (${addr.state}) Rental_w9.pdf`;
 
 export default function FileUpload() {
   const router = useRouter();
 
-  const [file, setFile] = useState(null);
+  const [file, setFile] = useState(null);      // Lease or Purchase contract
+  const [w9File, setW9File] = useState(null);  // Tenant broker W-9
   const [address, setAddress] = useState(null);
   const [progress, setProgress] = useState(0);
   const [uploading, setUploading] = useState(false);
 
-  const validate = (f) => {
-    if (!address) {
-      toast.error("Please search and select a property address (VA/MD/DC)");
-      return false;
+  const [transactionType, setTransactionType] = useState("");
+  const [tenantBrokerInvolved, setTenantBrokerInvolved] = useState(null);
+
+  const validate = () => {
+    if (!transactionType)
+      return toast.error("Please select Purchase or Rental"), false;
+
+    if (!address)
+      return toast.error("Please search and select a property address (VA/MD/DC)"), false;
+
+    if (!LICENSED.includes(address?.state))
+      return toast.error("Only VA, MD, DC addresses are allowed."), false;
+
+    if (!file)
+      return toast.error(
+        transactionType === "RENTAL"
+          ? "Please upload the rental lease"
+          : "Please choose a file"
+      ), false;
+
+    if (file.size > MAX_MB * 1024 * 1024)
+      return toast.error("File must be less than 30 MB"), false;
+
+    if (!ALLOWED.includes(file.type))
+      return toast.error("Only PDF, DOC, DOCX allowed"), false;
+
+    if (transactionType === "RENTAL") {
+      if (tenantBrokerInvolved === null)
+        return toast.error("Please confirm if a tenant broker is involved"), false;
+
+      if (tenantBrokerInvolved === true && !w9File)
+        return toast.error("Please upload tenant broker W-9"), false;
+
+      if (tenantBrokerInvolved === true && w9File) {
+        if (w9File.size > MAX_MB * 1024 * 1024)
+          return toast.error("W-9 must be less than 30 MB"), false;
+
+        if (!ALLOWED.includes(w9File.type))
+          return toast.error("W-9 must be a PDF, DOC, or DOCX"), false;
+      }
     }
-    if (!LICENSED.includes(address?.state)) {
-      toast.error("Only VA, MD, DC addresses are allowed.");
-      return false;
-    }
-    if (!f) {
-      toast.error("Please choose a file");
-      return false;
-    }
-    if (f.size > MAX_MB * 1024 * 1024) {
-      toast.error("File must be less than 30 MB");
-      return false;
-    }
-    if (!ALLOWED.includes(f.type)) {
-      toast.error("Only PDF, DOC, DOCX allowed");
-      return false;
-    }
+
     return true;
   };
 
   const upload = async () => {
     try {
-      if (!validate(file)) return;
+      if (!validate()) return;
 
       setUploading(true);
       setProgress(0);
 
-      const user = await Auth.currentAuthenticatedUser();
-      const idToken = user?.signInUserSession?.idToken?.jwtToken;
+      const { Auth } = await import("aws-amplify");
+      const session = await Auth.currentSession();
+      const accessToken = session.getAccessToken().getJwtToken();
 
-      if (!idToken) {
-        toast.error("Unable to read access token.");
-        setUploading(false);
-        return;
-      }
+      const idPayload = session.getIdToken().payload;
+      const agentName =
+        idPayload.given_name && idPayload.family_name
+          ? `${idPayload.given_name}-${idPayload.family_name}`.replace(/\s+/g, "-")
+          : (idPayload.email || "").split("@")[0];
 
-      // ✅ compute checksum BEFORE presign request
-      const checksumSha256 = await sha256Base64(file);
-      const desiredName = generateFilename(address, file.name);
-
-      // Request presigned URL
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_PRESIGN_API_URL}/presign`,
-        {
+      const presignAndUpload = async (filename, fileToUpload) => {
+        const res = await fetch(`${API_URL}/presign`, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${idToken}`,
+            Authorization: `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            filename: desiredName,
-            contentType: file.type,
-            fileSize: file.size,
-            checksumSha256,
+            filename,
+            contentType: fileToUpload.type,
+            fileSize: fileToUpload.size,
             address,
+            agentName,
+            transactionType,
+            tenantBrokerInvolved,
           }),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok || !data?.url) {
+          throw new Error(data?.message || "Presign failed");
         }
-      );
 
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
+        await new Promise((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", data.url);
 
-      if (!res.ok || !data?.url) {
-        toast.error(data?.error || "Presign failed");
-        setUploading(false);
-        return;
-      }
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable)
+              setProgress(Math.round((e.loaded / e.total) * 100));
+          };
 
-      const { url, requiredHeaders } = data;
+          xhr.onload = () =>
+            xhr.status === 200
+              ? resolve()
+              : reject(new Error(`Upload failed (${xhr.status})`));
 
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", url);
-
-      if (requiredHeaders?.["x-amz-checksum-sha256"]) {
-        xhr.setRequestHeader(
-          "x-amz-checksum-sha256",
-          requiredHeaders["x-amz-checksum-sha256"]
-        );
-      }
-
-      if (requiredHeaders?.["Content-Type"]) {
-        xhr.setRequestHeader("Content-Type", requiredHeaders["Content-Type"]);
-      }
-
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          setProgress(Math.round((e.loaded / e.total) * 100));
-        }
+          xhr.onerror = () => reject(new Error("Upload error"));
+          xhr.send(fileToUpload);
+        });
       };
 
-      xhr.onload = () => {
-        if (xhr.status === 200) {
-          toast.success("Upload complete!");
-          setProgress(0);
-          setFile(null);
+      // Upload lease or purchase contract
+      const primaryName =
+        transactionType === "RENTAL"
+          ? generateRentalLeaseName(address)
+          : generateFilename(address, file.name, transactionType);
 
-          // ✅ Redirect back to Agent Dashboard
-          setTimeout(() => {
-            router.push("/dashboard");
-          }, 600);
-        } else {
-          toast.error(`Upload failed (${xhr.status})`);
-        }
-        setUploading(false);
-      };
+      await presignAndUpload(primaryName, file);
 
-      xhr.onerror = () => {
-        toast.error("Upload error");
-        setUploading(false);
-      };
+      // Upload W-9 if needed
+      if (transactionType === "RENTAL" && tenantBrokerInvolved === true) {
+        const w9Name = generateRentalW9Name(address);
+        await presignAndUpload(w9Name, w9File);
+      }
 
-      xhr.send(file);
+      toast.success("Upload complete!");
+      setTimeout(() => router.push("/dashboard"), 600);
     } catch (err) {
-      console.error("Upload error:", err);
-      toast.error("An unexpected error occurred during upload.");
+      console.error(err);
+      toast.error(err.message || "Unexpected upload error");
+    } finally {
       setUploading(false);
     }
   };
 
   return (
     <div className="space-y-4">
-      <AddressSearch value={address} onChange={setAddress} />
+      {/* Transaction Type */}
+      <div className="bg-slate-50 p-3 rounded space-y-2">
+        <div className="text-xs font-medium text-slate-600">
+          Transaction Type <span className="text-red-500">*</span>
+        </div>
 
-      <input
-        type="file"
-        accept=".pdf,.doc,.docx"
-        disabled={!address}
-        onChange={(e) => setFile(e.target.files?.[0] || null)}
-        className={`w-full text-sm ${
-          !address ? "opacity-50 cursor-not-allowed" : ""
-        }`}
+        <div className="flex gap-6">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              checked={transactionType === "PURCHASE"}
+              onChange={() => {
+                setTransactionType("PURCHASE");
+                setAddress(null);
+                setTenantBrokerInvolved(null);
+                setW9File(null);
+              }}
+            />
+            Purchase
+          </label>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="radio"
+              checked={transactionType === "RENTAL"}
+              onChange={() => {
+                setTransactionType("RENTAL");
+                setAddress(null);
+                setTenantBrokerInvolved(null);
+                setW9File(null);
+              }}
+            />
+            Rental
+          </label>
+        </div>
+      </div>
+
+      <AddressSearch
+        value={address}
+        onChange={setAddress}
+        disabled={!transactionType}
       />
 
-      {address && file && (
-        <div className="bg-slate-50 p-3 rounded text-sm text-slate-700">
-          <div className="text-xs text-slate-500">S3 file name</div>
-          <div className="font-semibold">
-            {generateFilename(address, file.name)}
+      {transactionType === "RENTAL" && address && (
+        <div className="bg-slate-50 p-3 rounded space-y-2">
+          <div className="text-xs font-medium text-slate-600">
+            Is there a tenant broker involved?
+          </div>
+          <div className="flex gap-6">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                checked={tenantBrokerInvolved === true}
+                onChange={() => setTenantBrokerInvolved(true)}
+              />
+              Yes
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                checked={tenantBrokerInvolved === false}
+                onChange={() => setTenantBrokerInvolved(false)}
+              />
+              No
+            </label>
           </div>
         </div>
       )}
 
-      {progress > 0 && (
-        <div className="bg-gray-200 h-2 w-full rounded">
-          <div
-            className="bg-blue-600 h-2 rounded transition-all"
-            style={{ width: `${progress}%` }}
+      {/* Rental Lease Upload */}
+      {transactionType === "RENTAL" && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-slate-700">
+            Upload Rental Lease
+          </label>
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx"
+            disabled={!address}
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
           />
+        </div>
+      )}
+
+      {/* Tenant Broker W-9 */}
+      {transactionType === "RENTAL" && tenantBrokerInvolved === true && (
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-slate-700">
+            Upload Tenant Broker W-9
+          </label>
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx"
+            disabled={!address}
+            onChange={(e) => setW9File(e.target.files?.[0] || null)}
+          />
+        </div>
+      )}
+
+      {/* Purchase */}
+      {transactionType === "PURCHASE" && (
+        <input
+          type="file"
+          accept=".pdf,.doc,.docx"
+          disabled={!address}
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+        />
+      )}
+
+      {address && transactionType === "RENTAL" && (
+        <div className="bg-slate-50 p-3 rounded text-sm space-y-1">
+          <div className="text-xs text-slate-500">S3 file names</div>
+          {file && <div className="font-semibold">{generateRentalLeaseName(address)}</div>}
+          {tenantBrokerInvolved === true && w9File && (
+            <div className="font-semibold">{generateRentalW9Name(address)}</div>
+          )}
+        </div>
+      )}
+
+      {address && transactionType === "PURCHASE" && file && (
+        <div className="bg-slate-50 p-3 rounded text-sm">
+          <div className="text-xs text-slate-500">S3 file name</div>
+          <div className="font-semibold">
+            {generateFilename(address, file.name, transactionType)}
+          </div>
         </div>
       )}
 
       <button
         onClick={upload}
-        disabled={uploading || !address || !file}
-        className={`w-full px-4 py-2 rounded text-white ${
-          uploading
-            ? "bg-blue-400 cursor-not-allowed"
-            : "bg-blue-600 hover:bg-blue-700"
-        } transition`}
+        disabled={
+          uploading ||
+          !address ||
+          !transactionType ||
+          !file ||
+          (transactionType === "RENTAL" && tenantBrokerInvolved === null) ||
+          (transactionType === "RENTAL" && tenantBrokerInvolved === true && !w9File)
+        }
+        className="w-full bg-blue-600 text-white py-2 rounded"
       >
         {uploading ? "Uploading..." : "Upload"}
       </button>
