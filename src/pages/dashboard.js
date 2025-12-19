@@ -76,6 +76,9 @@ const getPropertyStateSafe = (address) => {
   return address.state || null;
 };
 
+// 🔒 Rental guard – rentals do NOT participate in stages
+const isRental = (contract) => contract?.transactionType === "RENTAL";
+
 /* =========================
    COMPONENT
 ========================= */
@@ -194,6 +197,7 @@ function DashboardPage({ user, signOut }) {
   const [stageForm, setStageForm] = useState({});
 
   const openStageModal = (f) => {
+    if (isRental(f)) return; // 🚫 rentals skip stages entirely
     setSelected(f);
     setNextStage(getNextStage(f.stage));
     setStageForm({});
@@ -320,7 +324,8 @@ function DashboardPage({ user, signOut }) {
                       : ""}
                   </div>
                 </div>
-
+                
+                {!isRental(f) && (
                 <div className="flex items-center gap-3">
                   <span className="text-xs px-2 py-1 rounded bg-slate-200">
                     {STAGE_LABELS[f.stage]}
@@ -332,6 +337,8 @@ function DashboardPage({ user, signOut }) {
                     Update Stage
                   </button>
                 </div>
+              )}
+
               </div>
             ))}
           </div>
@@ -357,7 +364,7 @@ function DashboardPage({ user, signOut }) {
         </button>
 
         {/* STAGE MODAL */}
-        {stageModalOpen && selected && (
+        {stageModalOpen && selected && !isRental(selected) && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4">
               <h3 className="text-lg font-bold">
@@ -406,7 +413,25 @@ function DashboardPage({ user, signOut }) {
                       )}
                       <option value="OTHER">Other</option>
                     </select>
-
+                     {/* ✅ NEW: Other Holder Textbox */}
+                    {stageForm.holder === "OTHER" && (
+                      <input
+                        type="text"
+                        maxLength={60}
+                        placeholder="Enter EMD holder name (e.g. Listing or Buyer Brokerage
+                        
+                        
+                        )"
+                        className="w-full border px-3 py-2 rounded"
+                        value={stageForm.otherHolder || ""}
+                        onChange={(e) =>
+                          setStageForm((p) => ({
+                            ...p,
+                            otherHolder: e.target.value,
+                          }))
+                        }
+                      />
+                    )}
                     {(EMD_LINKS[stageForm.holder] || []).map((l) => (
                       <a
                         key={l.url}

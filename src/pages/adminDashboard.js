@@ -115,6 +115,12 @@ export default function AdminDashboard({ user, signOut }) {
           stageLabel: STAGE_LABELS[stage],
           attention: getAttentionReason(stage),
 
+          // ✅ ADD THIS
+          emdHolder:
+            f.stageData?.holder === "OTHER"
+              ? f.stageData?.otherHolder
+              : f.stageData?.holder || null,
+
           // ✅ future-ready (Sprint 3)
           closingDate: f.stageData?.closed?.closingDate || null,
         };

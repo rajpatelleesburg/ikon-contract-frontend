@@ -45,12 +45,17 @@ export default function AgentSection({
 
   // ✅ ADD: reusable stage/attention UI (safe defaults)
   const renderStageMeta = (file) => {
-    const stage = file?.stage || "UPLOADED";
-    const label = file?.stageLabel || stage;
-    const attention = file?.attention;
+  const stage = file?.stage || "UPLOADED";
+  const label = file?.stageLabel || stage;
+  const attention = file?.attention;
 
-    return (
-      <div className="flex items-center gap-2 mt-1">
+  const showEmdHolder =
+    stage === "EMD_COLLECTED" && file?.emdHolder;
+
+  return (
+    <div className="mt-1 space-y-1">
+      {/* Stage badge + attention */}
+      <div className="flex items-center gap-2">
         <span
           className={`text-[11px] px-2 py-1 rounded-md ${
             STAGE_COLORS[stage] || STAGE_COLORS.UPLOADED
@@ -65,8 +70,20 @@ export default function AgentSection({
           </span>
         ) : null}
       </div>
-    );
+
+      {/* ✅ NEW: EMD Holder (Admin view only, conditional) */}
+      {showEmdHolder && (
+        <div className="text-[11px] text-slate-600 pl-1">
+          EMD Held By:{" "}
+          <span className="font-medium text-slate-800">
+            {file.emdHolder}
+          </span>
+        </div>
+      )}
+    </div>
+  );
   };
+
 
   if (mode === "allContracts") {
     return (
