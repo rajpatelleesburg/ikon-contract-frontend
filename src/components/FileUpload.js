@@ -5,6 +5,7 @@ import { useRouter } from "next/router";
 import toast from "react-hot-toast";
 import AddressSearch from "./AddressSearch";
 import { API_URL } from "../lib/apiConfig";
+import RentalCommissionForm from "./RentalCommissionForm";
 
 const MAX_MB = 30;
 
@@ -15,6 +16,7 @@ const ALLOWED = [
 ];
 
 const LICENSED = ["VA", "MD", "DC"];
+
 
 const safePart = (s) =>
   (s || "")
@@ -59,6 +61,7 @@ export default function FileUpload() {
 
   const [transactionType, setTransactionType] = useState("");
   const [tenantBrokerInvolved, setTenantBrokerInvolved] = useState(null);
+  const [rentalCommission, setRentalCommission] = useState(null);
 
   const validate = () => {
     if (!transactionType)
@@ -134,6 +137,10 @@ export default function FileUpload() {
             agentName,
             transactionType,
             tenantBrokerInvolved,
+             // ✅ NEW: Rental commission instructions
+            ...(transactionType === "RENTAL" && rentalCommission
+              ? { rentalCommission }
+              : {}),
           }),
         });
 
@@ -232,10 +239,14 @@ export default function FileUpload() {
       />
 
       {transactionType === "RENTAL" && address && (
-        <div className="bg-slate-50 p-3 rounded space-y-2">
+        <div className="bg-slate-50 p-3 rounded space-y-3">
+          {/* ===============================
+            TENANT BROKER QUESTION
+          =============================== */}
           <div className="text-xs font-medium text-slate-600">
             Is there a tenant broker involved?
           </div>
+
           <div className="flex gap-6">
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -245,6 +256,7 @@ export default function FileUpload() {
               />
               Yes
             </label>
+
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="radio"
@@ -254,8 +266,22 @@ export default function FileUpload() {
               No
             </label>
           </div>
+
+          {/* ===============================
+            COMMISSION DISBURSEMENT FORM
+            (Shown AFTER selection)
+          =============================== */}
+          {tenantBrokerInvolved !== null && (
+            <RentalCommissionForm
+              hasTenantBroker={tenantBrokerInvolved === true}
+              onChange={(data) => {
+                setRentalCommission(data);
+              }}
+            />
+          )}
         </div>
       )}
+
 
       {/* Rental Lease Upload */}
       {transactionType === "RENTAL" && (

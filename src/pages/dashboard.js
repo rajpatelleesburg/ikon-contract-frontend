@@ -81,6 +81,8 @@ const isRental = (contract) =>
   contract?.transactionType === "RENTAL" ||
   contract?.fileName?.toLowerCase().includes(" rental");
 
+const VIEW_FALLBACKS = ["recent", "month", "quarter", "year"];
+const MIN_VISIBLE = 3;
 
 /* =========================
    COMPONENT
@@ -179,26 +181,71 @@ function DashboardPage({ user, signOut }) {
   ========================= */
 
   const visibleFiles = useMemo(() => {
-    const base = files.filter((f) => {
-      // 🚫 Hide Rental W-9 from agent view
-      return !(f.fileName?.toLowerCase().includes("Rental_w9") || f.fileName?.toLowerCase().includes("Rentalw9"));
-    });
+  const base = files.filter((f) => {
+    const name = f.fileName?.toLowerCase() || "";
 
-    if (!search) return base;
+    // 🚫 Hide Rental W-9 from agent view (back office only)
+    if (name.includes("rental_w9") || name.includes("rentalw9")) {
+      return false;
+    }
 
-    const q = search.toLowerCase();
-    return base.filter((f) => {
-      const addr = f.address || {};
-      return (
-        f.fileName?.toLowerCase().includes(q) ||
-        `${addr.streetNumber || ""} ${addr.streetName || ""}`
-          .toLowerCase()
-          .includes(q) ||
-        addr.city?.toLowerCase().includes(q) ||
-        addr.state?.toLowerCase().includes(q)
-      );
-    });
-  }, [files, search]);
+    // 🚫 Hide commission disbursement artifacts (future-proof)
+    if (name.includes("comm_disbursement")) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (!search) return base;
+
+  const q = search.toLowerCase();
+  return base.filter((f) => {
+    const addr = f.address || {};
+    return (
+      nameIncludes(f.fileName, q) ||
+      `${addr.streetNumber || ""} ${addr.streetName || ""}`
+        .toLowerCase()
+        .includes(q) ||
+      addr.city?.toLowerCase().includes(q) ||
+      addr.state?.toLowerCase().includes(q)
+    );
+  });
+}, [files, search]);
+
+const VIEW_FALLBACKS = ["recent", "month", "quarter", "year"];
+const MIN_VISIBLE = 3;
+
+const [autoAdjusted, setAutoAdjusted] = useState(false);
+
+useEffect(() => {
+  // Only auto-adjust when starting from Recent
+  if (viewFilter !== "recent") return;
+
+  // Wait for data load to finish
+  if (loading) return;
+
+  // Prevent infinite loops
+  if (autoAdjusted) return;
+
+  // Enough items? Do nothing
+  if (visibleFiles.length >= MIN_VISIBLE) return;
+
+  // Move to next fallback
+  const currentIndex = VIEW_FALLBACKS.indexOf(viewFilter);
+
+  for (let i = currentIndex + 1; i < VIEW_FALLBACKS.length; i++) {
+    setAutoAdjusted(true);
+    setViewFilter(VIEW_FALLBACKS[i]);
+    return;
+  }
+}, [viewFilter, visibleFiles.length, loading, autoAdjusted]);
+
+
+// small helper (optional but cleaner)
+const nameIncludes = (name, q) =>
+  (name || "").toLowerCase().includes(q);
+
 
 
   /* =========================
@@ -286,10 +333,13 @@ function DashboardPage({ user, signOut }) {
 
         <div className="flex gap-2">
           <select
-            value={viewFilter}
-            onChange={(e) => setViewFilter(e.target.value)}
-            className="border px-2 py-1 text-sm rounded"
-          >
+              value={viewFilter}
+              onChange={(e) => {
+                setViewFilter(e.target.value);
+                setAutoAdjusted(false); // 🔑 allow fallback again
+              }}
+              className="border px-2 py-1 text-sm rounded"
+            >
             <option value="recent">Recent</option>
             <option value="month">This Month</option>
             <option value="quarter">This Quarter</option>
