@@ -6,15 +6,12 @@ import allowedAgents from "../lib/allowedAgents.json";
 import allowedPhones from "../lib/allowedPhones.json";
 import { Toaster } from "react-hot-toast";
 import { useEffect, useState } from "react";
-
 import dynamic from "next/dynamic";
 
 const Authenticator = dynamic(
-  () =>
-    import("@aws-amplify/ui-react").then((m) => m.Authenticator),
+  () => import("@aws-amplify/ui-react").then((m) => m.Authenticator),
   { ssr: false }
 );
-
 
 /* =====================================================================================
    CustomSignUpForm
@@ -87,6 +84,9 @@ function CustomSignUpForm() {
     if (/[^A-Za-z0-9]/.test(v)) s++;
     setPasswordStrength(s);
   };
+
+  // ✅ Make form available to AuthWrapper (same pattern as admin)
+  globalThis.__agentForm = form;
 
   /* RENDER */
   return (
@@ -222,7 +222,9 @@ function CustomSignUpForm() {
               <ul className="text-xs text-slate-600 space-y-1">
                 <li
                   className={
-                    form.password.length >= 12 ? "text-green-600" : "text-red-600"
+                    form.password.length >= 12
+                      ? "text-green-600"
+                      : "text-red-600"
                   }
                 >
                   • Minimum 12 characters
@@ -277,9 +279,7 @@ function CustomSignUpForm() {
                     placeholder=" "
                     type={showConfirmPwd ? "text" : "password"}
                     value={form.confirm_password}
-                    onChange={(e) =>
-                      update("confirm_password", e.target.value)
-                    }
+                    onChange={(e) => update("confirm_password", e.target.value)}
                   />
                   <label className="floating-label">Confirm Password</label>
                   <span
@@ -302,6 +302,7 @@ function CustomSignUpForm() {
             <button
               onClick={() => setStep(1)}
               className="text-sm text-slate-600 hover:underline"
+              type="button"
             >
               ← Back
             </button>
@@ -311,6 +312,7 @@ function CustomSignUpForm() {
               className={`px-6 py-2 rounded-lg text-sm text-white ${
                 emailAllowed ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-400"
               }`}
+              type="button"
             >
               Continue →
             </button>
@@ -339,9 +341,12 @@ function CustomSignUpForm() {
             <button
               className="text-sm text-slate-600 hover:underline"
               onClick={() => setStep(2)}
+              type="button"
             >
               ← Back
             </button>
+
+            {/* IMPORTANT: this "submit" is what triggers Authenticator SignUp */}
             <button
               type="submit"
               className="px-6 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700"
@@ -352,10 +357,9 @@ function CustomSignUpForm() {
         </div>
       )}
 
-      {/* Amplify hidden fields */}
+      {/* Hidden fields (Amplify expects these names) */}
       <input type="hidden" name="given_name" value={form.given_name} />
       <input type="hidden" name="family_name" value={form.family_name} />
-      {/* <input type="hidden" name="phone_number" value={formatPhone(form.phone_number)} /> */}
       <input type="hidden" name="email" value={form.email} />
       <input type="hidden" name="username" value={form.email} />
       <input type="hidden" name="password" value={form.password} />
@@ -369,19 +373,14 @@ function CustomSignUpForm() {
 }
 
 /* =====================================================================================
-   AuthWrapper (DEFAULT EXPORT)
+   AuthWrapper
 ===================================================================================== */
 
 export default function AuthWrapper({ children }) {
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
 
-  // 👇 This is the key
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // 🚫 SSR guard
+  useEffect(() => setMounted(true), []);
   if (!mounted) return null;
 
   return (
@@ -389,12 +388,73 @@ export default function AuthWrapper({ children }) {
       <Toaster position="top-center" />
       <div className="min-h-screen flex items-center justify-center bg-slate-100 px-4">
         <div className="w-full max-w-lg animate-fade-in">
-          <Authenticator>
+          <Authenticator
+            // ✅ Use your interactive signup UI
+            components={{
+              SignUp: {
+                FormFields: (props) => <CustomSignUpForm {...props} />,
+              },
+            }}
+            // ✅ Actually perform signup with your form data (same pattern as AdminAuthWrapper)
+            services={{
+              async handleSignUp() {
+                const { Auth } = await import("aws-amplify");
+
+                const form = globalThis.__agentForm || {};
+                const email = (form.email || "").toLowerCase().trim();
+
+                // normalize phone to +1XXXXXXXXXX
+                const digits = (form.phone_number || "").replace(/\D/g, "");
+                const ten =
+                  digits.length === 11 && digits.startsWith("1")
+                    ? digits.slice(1)
+                    : digits;
+                const phone = ten.length === 10 ? `+1${ten}` : "";
+
+                // mark that this user should land on create-profile after signup
+                try {
+                  localStorage.setItem("ikon_post_signup", "1");
+                } catch {}
+
+                return Auth.signUp({
+                  username: email,
+                  password: form.password,
+                  attributes: {
+                    email,
+                    given_name: form.given_name,
+                    family_name: form.family_name,
+                    ...(phone ? { phone_number: phone } : {}),
+                  },
+                  autoSignIn: { enabled: true },
+                });
+              },
+            }}
+          >
             {(context) => {
               const { user, signOut } = context;
 
-              if (user && router.pathname === "/") {
-                router.replace("/dashboard");
+              if (user) {
+                // If we just signed up, go to create-profile first
+                let postSignup = false;
+                try {
+                  postSignup = localStorage.getItem("ikon_post_signup") === "1";
+                } catch {}
+
+                if (postSignup) {
+                  try {
+                    localStorage.removeItem("ikon_post_signup");
+                  } catch {}
+                  if (router.pathname !== "/create-profile") {
+                    router.replace("/create-profile");
+                    return null;
+                  }
+                } else {
+                  // normal login flow
+                  if (router.pathname === "/" || router.pathname === "/index") {
+                    router.replace("/dashboard");
+                    return null;
+                  }
+                }
               }
 
               return children({ user, signOut });
