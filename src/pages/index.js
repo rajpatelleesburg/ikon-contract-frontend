@@ -1,17 +1,7 @@
 // src/pages/index.js
 "use client";
 
-import { useEffect } from "react";
-
-export default function Home({ user }) {
-  useEffect(() => {
-    if (user) {
-      window.location.href = "/dashboard";
-    }
-  }, [user]);
-
-  if (user) return null;
-
+export default function Home() {
   return (
     <div className="text-center py-16 px-4">
       <h1 className="text-4xl font-bold mb-4">
