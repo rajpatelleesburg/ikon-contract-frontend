@@ -120,10 +120,10 @@ function DashboardPage({ user, signOut }) {
   /* =========================
      FETCH CONTRACTS
   ========================= */
-  console.log(
-    "NEXT_PUBLIC_API_URL at runtime:",
-    process.env.NEXT_PUBLIC_API_URL
-  );
+  //console.log(
+   // "NEXT_PUBLIC_API_URL at runtime:",
+   // process.env.NEXT_PUBLIC_API_URL
+  //);
 
   const fetchContracts = useCallback(
     async ({ cursor = null, append = false } = {}) => {
