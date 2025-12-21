@@ -14,7 +14,6 @@ const STAGE_ORDER = [
   "EMD_COLLECTED",
   "CONTINGENCIES",
   "CLOSED",
-  "COMMISSION",
 ];
 
 const STAGE_LABELS = {
@@ -22,16 +21,15 @@ const STAGE_LABELS = {
   EMD_COLLECTED: "Collect EMD",
   CONTINGENCIES: "Contingencies",
   CLOSED: "Closed",
-  COMMISSION: "Commission",
 };
 
 const NEXT_STAGES = {
   UPLOADED: ["EMD_COLLECTED"],
   EMD_COLLECTED: ["CONTINGENCIES"],
   CONTINGENCIES: ["CLOSED"],
-  CLOSED: ["COMMISSION"],
-  COMMISSION: [],
+  CLOSED: [],
 };
+
 
 const getNextStage = (stage) => NEXT_STAGES[stage]?.[0] || "";
 
@@ -75,6 +73,14 @@ const getPropertyStateSafe = (address) => {
   if (!address) return null;
   return address.state || null;
 };
+
+// --- DISPLAY NAME NORMALIZATION (Agent UI only) ---
+const stripFolder = (s = "") => String(s).split("/").pop(); // remove "Raj-Patel/" etc
+const stripStateParens = (s = "") => String(s).replace(/\((VA|MD|DC)\)/g, "$1"); // "(VA)" -> "VA"
+const normalizeSpaces = (s = "") => String(s).replace(/\s+/g, " ").trim();
+
+const displayFileName = (rawName) =>
+  normalizeSpaces(stripStateParens(stripFolder(rawName)));
 
 // 🔒 Rental guard – rentals do NOT participate in stages
 const isRental = (contract) =>
@@ -123,6 +129,8 @@ function DashboardPage({ user, signOut }) {
     profile?.given_name && profile?.family_name
       ? `${profile.given_name} ${profile.family_name}`
       : profile?.email?.split("@")[0] || "Agent";
+
+  //const agentNameKey = fullName.replace(/\s+/g, "-");
 
   /* =========================
      FETCH CONTRACTS
@@ -188,7 +196,7 @@ function DashboardPage({ user, signOut }) {
 
   const visibleFiles = useMemo(() => {
   const base = files.filter((f) => {
-    const name = f.fileName?.toLowerCase() || "";
+  const name = f.fileName?.toLowerCase() || "";
 
     // 🚫 Hide Rental W-9 from agent view (back office only)
     if (name.includes("rental_w9") || name.includes("rentalw9")) {
@@ -278,21 +286,27 @@ const nameIncludes = (name, q) =>
     try {
       const session = await Auth.currentSession();
       const token = session.getAccessToken().getJwtToken();
-
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/contracts/${selected.contractId}/stage`,
+        `${process.env.NEXT_PUBLIC_API_URL}/contract/stage`,
         {
-          method: "PATCH",
+          method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            contractId: selected.contractId, // ✅ full "Raj-Patel/...pdf"
             stage: nextStage,
-            stageData: stageForm,
+            stageData: stageForm || {},
           }),
         }
       );
+
+      if (!res.ok) {
+        const t = await res.text();
+        console.error("Stage update failed:", t);
+        throw new Error("Stage update failed");
+      }
 
       if (!res.ok) throw new Error("Stage update failed");
 
@@ -372,7 +386,7 @@ const nameIncludes = (name, q) =>
                     rel="noreferrer"
                     className="text-blue-600 underline"
                   >
-                    {f.fileName}
+                    {displayFileName(f.fileName)}
                   </a>
                   <div className="text-xs text-slate-500">
                     {f.lastModified
@@ -386,12 +400,16 @@ const nameIncludes = (name, q) =>
                     <span className="text-xs px-2 py-1 rounded bg-slate-200">
                       {STAGE_LABELS[f.stage]}
                     </span>
-                    <button
-                      onClick={() => openStageModal(f)}
-                      className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
-                    >
-                      Update Stage
-                    </button>
+
+                    {/* 🔒 Disable stage updates once CLOSED */}
+                    {f.stage !== "CLOSED" && (
+                      <button
+                        onClick={() => openStageModal(f)}
+                        className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+                      >
+                        Update Stage
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -569,7 +587,44 @@ const nameIncludes = (name, q) =>
                       }))
                     }
                   />
+                
+                {/* ALTA Upload */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Upload ALTA / Settlement Statement (PDF)
+                  </label>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    className="w-full border px-3 py-2 rounded text-sm"
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        altaFile: e.target.files?.[0] || null,
+                      }))
+                    }
+                  />
                 </div>
+
+                {/* Commission Instructions */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Commission Instructions (for Admin)
+                  </label>
+                  <textarea
+                    rows={4}
+                    placeholder="Example: 70/30 split, referral fee to XYZ Brokerage, cap applied, etc."
+                    className="w-full border px-3 py-2 rounded text-sm"
+                    value={stageForm.commissionNote || ""}
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        commissionNote: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
               )}
 
               <div className="flex justify-end gap-2 pt-3">
