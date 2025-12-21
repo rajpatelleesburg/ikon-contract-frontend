@@ -76,6 +76,14 @@ const getPropertyStateSafe = (address) => {
   return address.state || null;
 };
 
+// --- DISPLAY NAME NORMALIZATION (Agent UI only) ---
+const stripFolder = (s = "") => String(s).split("/").pop(); // remove "Raj-Patel/" etc
+const stripStateParens = (s = "") => String(s).replace(/\((VA|MD|DC)\)/g, "$1"); // "(VA)" -> "VA"
+const normalizeSpaces = (s = "") => String(s).replace(/\s+/g, " ").trim();
+
+const displayFileName = (rawName) =>
+  normalizeSpaces(stripStateParens(stripFolder(rawName)));
+
 // 🔒 Rental guard – rentals do NOT participate in stages
 const isRental = (contract) =>
   contract?.transactionType === "RENTAL" ||
@@ -188,7 +196,7 @@ function DashboardPage({ user, signOut }) {
 
   const visibleFiles = useMemo(() => {
   const base = files.filter((f) => {
-    const name = f.fileName?.toLowerCase() || "";
+  const name = f.fileName?.toLowerCase() || "";
 
     // 🚫 Hide Rental W-9 from agent view (back office only)
     if (name.includes("rental_w9") || name.includes("rentalw9")) {
@@ -280,19 +288,21 @@ const nameIncludes = (name, q) =>
       const token = session.getAccessToken().getJwtToken();
 
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/contracts/${selected.contractId}/stage`,
+        `${process.env.NEXT_PUBLIC_API_URL}/contract/stage`,
         {
-          method: "PATCH",
+          method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            contractId: selected.contractId,
             stage: nextStage,
             stageData: stageForm,
           }),
         }
       );
+
 
       if (!res.ok) throw new Error("Stage update failed");
 
@@ -372,7 +382,7 @@ const nameIncludes = (name, q) =>
                     rel="noreferrer"
                     className="text-blue-600 underline"
                   >
-                    {f.fileName}
+                    {displayFileName(f.fileName)}
                   </a>
                   <div className="text-xs text-slate-500">
                     {f.lastModified

@@ -34,7 +34,7 @@ const generateFilename = (
   const streetNumber = String(addr?.streetNumber || "").replace(/\D/g, "");
   const streetName = safePart(addr?.streetName);
   const city = safePart(addr?.city);
-  const state = addr?.state ? ` (${addr.state})` : "";
+  const state = addr?.state ? ` ${addr.state}` : "";
 
   if (transactionType === "RENTAL") {
     const suffix = tenantBrokerInvolved ? "Rental_w9" : "Rental";
