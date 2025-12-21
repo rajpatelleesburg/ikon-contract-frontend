@@ -132,6 +132,8 @@ function DashboardPage({ user, signOut }) {
       ? `${profile.given_name} ${profile.family_name}`
       : profile?.email?.split("@")[0] || "Agent";
 
+  //const agentNameKey = fullName.replace(/\s+/g, "-");
+
   /* =========================
      FETCH CONTRACTS
   ========================= */
@@ -286,7 +288,6 @@ const nameIncludes = (name, q) =>
     try {
       const session = await Auth.currentSession();
       const token = session.getAccessToken().getJwtToken();
-
       const res = await fetch(
         `${process.env.NEXT_PUBLIC_API_URL}/contract/stage`,
         {
@@ -296,13 +297,18 @@ const nameIncludes = (name, q) =>
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            contractId: selected.contractId,
+            contractId: selected.contractId, // ✅ full "Raj-Patel/...pdf"
             stage: nextStage,
-            stageData: stageForm,
+            stageData: stageForm || {},
           }),
         }
       );
 
+      if (!res.ok) {
+        const t = await res.text();
+        console.error("Stage update failed:", t);
+        throw new Error("Stage update failed");
+      }
 
       if (!res.ok) throw new Error("Stage update failed");
 
