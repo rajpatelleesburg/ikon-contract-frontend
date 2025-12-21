@@ -81,6 +81,9 @@ const isRental = (contract) =>
   contract?.transactionType === "RENTAL" ||
   contract?.fileName?.toLowerCase().includes(" rental");
 
+const VIEW_FALLBACKS = ["recent", "month", "quarter", "year"];
+const MIN_VISIBLE = 3;
+
 
 /* =========================
    COMPONENT
@@ -100,7 +103,11 @@ function DashboardPage({ user, signOut }) {
   const [viewFilter, setViewFilter] = useState("recent");
   const [search, setSearch] = useState("");
 
-  const limit = viewFilter === "recent" ? 3 : 10;
+  const FETCH_LIMIT = 10;   // how many we fetch from backend
+  const DISPLAY_LIMIT = 3; // how many we show initially
+  const limit = FETCH_LIMIT;
+
+  const [displayCount, setDisplayCount] = useState(3);
 
   /* =========================
      LOAD PROFILE
@@ -171,6 +178,7 @@ function DashboardPage({ user, signOut }) {
     if (!user) return;
     setFiles([]);
     setNextCursor(null);
+    setDisplayCount(3); // 🔑 reset visible items
     fetchContracts({ append: false });
   }, [user, viewFilter, fetchContracts]);
 
@@ -179,26 +187,57 @@ function DashboardPage({ user, signOut }) {
   ========================= */
 
   const visibleFiles = useMemo(() => {
-    const base = files.filter((f) => {
-      // 🚫 Hide Rental W-9 from agent view
-      return !(f.fileName?.toLowerCase().includes("Rental_w9") || f.fileName?.toLowerCase().includes("Rentalw9"));
-    });
+  const base = files.filter((f) => {
+    const name = f.fileName?.toLowerCase() || "";
 
-    if (!search) return base;
+    // 🚫 Hide Rental W-9 from agent view (back office only)
+    if (name.includes("rental_w9") || name.includes("rentalw9")) {
+      return false;
+    }
 
-    const q = search.toLowerCase();
-    return base.filter((f) => {
-      const addr = f.address || {};
-      return (
-        f.fileName?.toLowerCase().includes(q) ||
-        `${addr.streetNumber || ""} ${addr.streetName || ""}`
-          .toLowerCase()
-          .includes(q) ||
-        addr.city?.toLowerCase().includes(q) ||
-        addr.state?.toLowerCase().includes(q)
-      );
-    });
-  }, [files, search]);
+    // 🚫 Hide commission disbursement artifacts (future-proof)
+    if (name.includes("comm_disbursement")) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (!search) return base;
+
+  const q = search.toLowerCase();
+  return base.filter((f) => {
+    const addr = f.address || {};
+    return (
+      nameIncludes(f.fileName, q) ||
+      `${addr.streetNumber || ""} ${addr.streetName || ""}`
+        .toLowerCase()
+        .includes(q) ||
+      addr.city?.toLowerCase().includes(q) ||
+      addr.state?.toLowerCase().includes(q)
+    );
+  });
+}, [files, search]);
+
+const [autoAdjusted, setAutoAdjusted] = useState(false);
+
+useEffect(() => {
+  if (viewFilter !== "recent") return;
+  if (loading) return;
+  if (autoAdjusted) return;
+
+  // 🔒 Only evaluate fallback once, on initial load
+  if (files.length < DISPLAY_LIMIT) {
+    setAutoAdjusted(true);
+    setViewFilter("month");
+  }
+}, [viewFilter, files.length, loading, autoAdjusted]);
+
+
+// small helper (optional but cleaner)
+const nameIncludes = (name, q) =>
+  (name || "").toLowerCase().includes(q);
+
 
 
   /* =========================
@@ -286,10 +325,13 @@ function DashboardPage({ user, signOut }) {
 
         <div className="flex gap-2">
           <select
-            value={viewFilter}
-            onChange={(e) => setViewFilter(e.target.value)}
-            className="border px-2 py-1 text-sm rounded"
-          >
+              value={viewFilter}
+              onChange={(e) => {
+                setViewFilter(e.target.value);
+                setAutoAdjusted(false); // 🔑 allow fallback again
+              }}
+              className="border px-2 py-1 text-sm rounded"
+            >
             <option value="recent">Recent</option>
             <option value="month">This Month</option>
             <option value="quarter">This Quarter</option>
@@ -318,7 +360,7 @@ function DashboardPage({ user, signOut }) {
 
         {!loading && (
           <div className="space-y-2">
-            {visibleFiles.map((f) => (
+            {visibleFiles.slice(0, displayCount).map((f) => (
               <div
                 key={f.contractId}
                 className="flex justify-between items-center bg-slate-50 p-3 rounded border"
@@ -358,18 +400,16 @@ function DashboardPage({ user, signOut }) {
           </div>
         )}
 
-        {!loading && nextCursor && visibleFiles.length >= limit && (
+        {!loading && visibleFiles.length > displayCount && (
           <button
-            onClick={() =>
-              fetchContracts({ cursor: nextCursor, append: true })
-            }
-            disabled={loadingMore}
+            onClick={() => {
+              setDisplayCount((c) => c + DISPLAY_LIMIT);
+            }}
             className="w-full border rounded py-2"
           >
-            {loadingMore ? "Loading..." : "Load More"}
+            Load More
           </button>
         )}
-
 
         <button
           onClick={signOut}

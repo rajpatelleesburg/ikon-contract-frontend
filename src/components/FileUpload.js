@@ -5,6 +5,7 @@ import { useRouter } from "next/router";
 import toast from "react-hot-toast";
 import AddressSearch from "./AddressSearch";
 import { API_URL } from "../lib/apiConfig";
+import RentalCommissionForm from "./RentalCommissionForm";
 
 const MAX_MB = 30;
 
@@ -15,6 +16,7 @@ const ALLOWED = [
 ];
 
 const LICENSED = ["VA", "MD", "DC"];
+
 
 const safePart = (s) =>
   (s || "")
@@ -59,6 +61,7 @@ export default function FileUpload() {
 
   const [transactionType, setTransactionType] = useState("");
   const [tenantBrokerInvolved, setTenantBrokerInvolved] = useState(null);
+  const [rentalCommission, setRentalCommission] = useState(null);
 
   const validate = () => {
     if (!transactionType)
@@ -119,7 +122,7 @@ export default function FileUpload() {
           ? `${idPayload.given_name}-${idPayload.family_name}`.replace(/\s+/g, "-")
           : (idPayload.email || "").split("@")[0];
 
-      const presignAndUpload = async (filename, fileToUpload) => {
+      const presignAndUpload = async (filename, fileToUpload, fileRole) => {
         const res = await fetch(`${API_URL}/presign`, {
           method: "POST",
           headers: {
@@ -130,10 +133,11 @@ export default function FileUpload() {
             filename,
             contentType: fileToUpload.type,
             fileSize: fileToUpload.size,
-            address,
             agentName,
+            address,
             transactionType,
             tenantBrokerInvolved,
+            fileRole, // 🔑 NEW: tells backend what this file represents
           }),
         });
 
@@ -168,21 +172,54 @@ export default function FileUpload() {
           ? generateRentalLeaseName(address)
           : generateFilename(address, file.name, transactionType);
 
-      await presignAndUpload(primaryName, file);
+      await presignAndUpload(
+        primaryName,
+        file,
+        transactionType === "RENTAL" ? "LEASE" : "PURCHASE"
+      );
+
 
       // Upload W-9 if needed
       if (transactionType === "RENTAL" && tenantBrokerInvolved === true) {
         const w9Name = generateRentalW9Name(address);
-        await presignAndUpload(w9Name, w9File);
+        //await presignAndUpload(w9Name, w9File);
+        await presignAndUpload(w9Name, w9File, "W9");
+      }
+
+      // ✅ Save rental commission disbursement JSON (AFTER uploads)
+      if (transactionType === "RENTAL" && rentalCommission) {
+        try {
+          const res = await fetch(`${API_URL}/contracts/rental/commission`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              address,
+              tenantBrokerInvolved,
+              rentalCommission,
+              agentName, // 🔑 REQUIRED for consistent S3 path
+            }),
+          });
+
+          if (!res.ok) {
+            console.error("Commission save failed", await res.text());
+          }
+        } catch (e) {
+          console.error("Commission save error", e);
+        }
       }
 
       toast.success("Upload complete!");
-      setTimeout(() => router.push("/dashboard"), 600);
+      //router.replace("/dashboard");
     } catch (err) {
       console.error(err);
       toast.error(err.message || "Unexpected upload error");
     } finally {
       setUploading(false);
+      // 🔒 Guarantee exit from upload screen
+      router.replace("/dashboard");
     }
   };
 
@@ -204,6 +241,7 @@ export default function FileUpload() {
                 setAddress(null);
                 setTenantBrokerInvolved(null);
                 setW9File(null);
+                setRentalCommission(null); // 🔒 clear stale rental data
               }}
             />
             Purchase
@@ -218,6 +256,7 @@ export default function FileUpload() {
                 setAddress(null);
                 setTenantBrokerInvolved(null);
                 setW9File(null);
+                setRentalCommission(null); // 🔒 reset for fresh rental flow
               }}
             />
             Rental
@@ -232,10 +271,14 @@ export default function FileUpload() {
       />
 
       {transactionType === "RENTAL" && address && (
-        <div className="bg-slate-50 p-3 rounded space-y-2">
+        <div className="bg-slate-50 p-3 rounded space-y-3">
+          {/* ===============================
+            TENANT BROKER QUESTION
+          =============================== */}
           <div className="text-xs font-medium text-slate-600">
             Is there a tenant broker involved?
           </div>
+
           <div className="flex gap-6">
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -245,6 +288,7 @@ export default function FileUpload() {
               />
               Yes
             </label>
+
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="radio"
@@ -254,8 +298,22 @@ export default function FileUpload() {
               No
             </label>
           </div>
+
+          {/* ===============================
+            COMMISSION DISBURSEMENT FORM
+            (Shown AFTER selection)
+          =============================== */}
+          {tenantBrokerInvolved !== null && (
+            <RentalCommissionForm
+              hasTenantBroker={tenantBrokerInvolved === true}
+              onChange={(data) => {
+                setRentalCommission(data);
+              }}
+            />
+          )}
         </div>
       )}
+
 
       {/* Rental Lease Upload */}
       {transactionType === "RENTAL" && (
