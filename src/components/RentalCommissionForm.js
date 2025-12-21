@@ -32,9 +32,14 @@ export default function RentalCommissionForm({
   // If no tenant broker, force percent to 0
   useEffect(() => {
     if (!hasTenantBroker) {
+      // No tenant broker → force 0%
       setPercent(0);
+    } else {
+      // Tenant broker selected → restore default ONLY if it was 0
+      setPercent((prev) => (prev === 0 ? 25 : prev));
     }
   }, [hasTenantBroker]);
+
 
   const tenantAmount = useMemo(() => {
     if (!hasTenantBroker) return 0;

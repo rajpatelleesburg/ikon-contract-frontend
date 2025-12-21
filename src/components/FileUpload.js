@@ -122,7 +122,7 @@ export default function FileUpload() {
           ? `${idPayload.given_name}-${idPayload.family_name}`.replace(/\s+/g, "-")
           : (idPayload.email || "").split("@")[0];
 
-      const presignAndUpload = async (filename, fileToUpload) => {
+      const presignAndUpload = async (filename, fileToUpload, fileRole) => {
         const res = await fetch(`${API_URL}/presign`, {
           method: "POST",
           headers: {
@@ -137,10 +137,7 @@ export default function FileUpload() {
             agentName,
             transactionType,
             tenantBrokerInvolved,
-             // ✅ NEW: Rental commission instructions
-            ...(transactionType === "RENTAL" && rentalCommission
-              ? { rentalCommission }
-              : {}),
+            fileRole, // 🔑 NEW: tells backend what this file represents
           }),
         });
 
@@ -175,16 +172,39 @@ export default function FileUpload() {
           ? generateRentalLeaseName(address)
           : generateFilename(address, file.name, transactionType);
 
-      await presignAndUpload(primaryName, file);
+      await presignAndUpload(
+        primaryName,
+        file,
+        transactionType === "RENTAL" ? "LEASE" : "PURCHASE"
+      );
+
 
       // Upload W-9 if needed
       if (transactionType === "RENTAL" && tenantBrokerInvolved === true) {
         const w9Name = generateRentalW9Name(address);
-        await presignAndUpload(w9Name, w9File);
+        //await presignAndUpload(w9Name, w9File);
+        await presignAndUpload(w9Name, w9File, "W9");
       }
 
+      // ✅ Save rental commission disbursement JSON (AFTER uploads)
+      if (transactionType === "RENTAL" && rentalCommission) {
+        await fetch(`${API_URL}/contracts/rental/commission`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            address,
+            tenantBrokerInvolved,
+            rentalCommission,
+          }),
+        });
+      }
+
+
       toast.success("Upload complete!");
-      setTimeout(() => router.push("/dashboard"), 600);
+      router.replace("/dashboard");
     } catch (err) {
       console.error(err);
       toast.error(err.message || "Unexpected upload error");
@@ -211,6 +231,7 @@ export default function FileUpload() {
                 setAddress(null);
                 setTenantBrokerInvolved(null);
                 setW9File(null);
+                setRentalCommission(null); // 🔒 clear stale rental data
               }}
             />
             Purchase
@@ -225,6 +246,7 @@ export default function FileUpload() {
                 setAddress(null);
                 setTenantBrokerInvolved(null);
                 setW9File(null);
+                setRentalCommission(null); // 🔒 reset for fresh rental flow
               }}
             />
             Rental

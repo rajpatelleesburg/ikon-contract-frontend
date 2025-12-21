@@ -102,7 +102,9 @@ function DashboardPage({ user, signOut }) {
   const [viewFilter, setViewFilter] = useState("recent");
   const [search, setSearch] = useState("");
 
-  const limit = viewFilter === "recent" ? 3 : 10;
+  const FETCH_LIMIT = 10;   // how many we fetch from backend
+  const DISPLAY_LIMIT = 3; // how many we show initially
+  const limit = FETCH_LIMIT;
 
   /* =========================
      LOAD PROFILE
@@ -219,27 +221,23 @@ const MIN_VISIBLE = 3;
 const [autoAdjusted, setAutoAdjusted] = useState(false);
 
 useEffect(() => {
-  // Only auto-adjust when starting from Recent
+  // Only auto-adjust from Recent
   if (viewFilter !== "recent") return;
 
-  // Wait for data load to finish
+  // Wait for data
   if (loading) return;
 
-  // Prevent infinite loops
+  // If we already have enough total items, do nothing
+  if (files.length >= DISPLAY_LIMIT) return;
+
+  // Prevent repeated switching
   if (autoAdjusted) return;
 
-  // Enough items? Do nothing
-  if (visibleFiles.length >= MIN_VISIBLE) return;
+  // Auto fallback chain
+  setAutoAdjusted(true);
+  setViewFilter("month");
+}, [viewFilter, files.length, loading, autoAdjusted]);
 
-  // Move to next fallback
-  const currentIndex = VIEW_FALLBACKS.indexOf(viewFilter);
-
-  for (let i = currentIndex + 1; i < VIEW_FALLBACKS.length; i++) {
-    setAutoAdjusted(true);
-    setViewFilter(VIEW_FALLBACKS[i]);
-    return;
-  }
-}, [viewFilter, visibleFiles.length, loading, autoAdjusted]);
 
 
 // small helper (optional but cleaner)
@@ -368,7 +366,7 @@ const nameIncludes = (name, q) =>
 
         {!loading && (
           <div className="space-y-2">
-            {visibleFiles.map((f) => (
+            {visibleFiles.slice(0, DISPLAY_LIMIT).map((f) => (
               <div
                 key={f.contractId}
                 className="flex justify-between items-center bg-slate-50 p-3 rounded border"
@@ -408,7 +406,7 @@ const nameIncludes = (name, q) =>
           </div>
         )}
 
-        {!loading && nextCursor && visibleFiles.length >= limit && (
+        {!loading && nextCursor && (
           <button
             onClick={() =>
               fetchContracts({ cursor: nextCursor, append: true })
@@ -419,7 +417,6 @@ const nameIncludes = (name, q) =>
             {loadingMore ? "Loading..." : "Load More"}
           </button>
         )}
-
 
         <button
           onClick={signOut}
