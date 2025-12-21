@@ -9,12 +9,7 @@ import dynamic from "next/dynamic";
    STAGE CONFIG
 ========================= */
 
-const STAGE_ORDER = [
-  "UPLOADED",
-  "EMD_COLLECTED",
-  "CONTINGENCIES",
-  "CLOSED",
-];
+const STAGE_ORDER = ["UPLOADED", "EMD_COLLECTED", "CONTINGENCIES", "CLOSED"];
 
 const STAGE_LABELS = {
   UPLOADED: "Uploaded",
@@ -29,7 +24,6 @@ const NEXT_STAGES = {
   CONTINGENCIES: ["CLOSED"],
   CLOSED: [],
 };
-
 
 const getNextStage = (stage) => NEXT_STAGES[stage]?.[0] || "";
 
@@ -69,27 +63,138 @@ const CONTINGENCY_TYPES = [
    HELPERS
 ========================= */
 
-const getPropertyStateSafe = (address) => {
-  if (!address) return null;
-  return address.state || null;
-};
+const getPropertyStateSafe = (address) => address?.state || null;
 
 // --- DISPLAY NAME NORMALIZATION (Agent UI only) ---
-const stripFolder = (s = "") => String(s).split("/").pop(); // remove "Raj-Patel/" etc
-const stripStateParens = (s = "") => String(s).replace(/\((VA|MD|DC)\)/g, "$1"); // "(VA)" -> "VA"
+const stripFolder = (s = "") => String(s).split("/").pop(); // last segment
+const stripStateParens = (s = "") =>
+  String(s).replace(/\((VA|MD|DC)\)/g, "$1"); // "(VA)" -> "VA"
 const normalizeSpaces = (s = "") => String(s).replace(/\s+/g, " ").trim();
 
 const displayFileName = (rawName) =>
   normalizeSpaces(stripStateParens(stripFolder(rawName)));
 
-// 🔒 Rental guard – rentals do NOT participate in stages
+// Rental guard (existing)
 const isRental = (contract) =>
   contract?.transactionType === "RENTAL" ||
-  contract?.fileName?.toLowerCase().includes(" rental");
+  contract?.fileName?.toLowerCase().includes(" rental") ||
+  contract?.s3Key?.toLowerCase().includes(" rental/");
 
-const VIEW_FALLBACKS = ["recent", "month", "quarter", "year"];
-const MIN_VISIBLE = 3;
+// ✅ Purchase primary contract detection (API-safe)
+const isPurchasePrimaryContract = (f) => {
+  if (!f) return false;
 
+  // Rental guard (existing behavior preserved)
+  if (
+    f.transactionType === "RENTAL" ||
+    String(f.fileName || "").toLowerCase().includes(" rental")
+  ) {
+    return false;
+  }
+
+  // Purchase primary contract is always Contract.pdf + has address
+  return (
+    String(f.fileName || "").toLowerCase() === "contract.pdf" &&
+    !!f.address
+  );
+};
+
+const getPurchaseLabelFromAddress = (addr) => {
+  if (!addr) return "Purchase Contract";
+  return [addr.streetNumber, addr.streetName, addr.city, addr.state]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+// --- PURCHASE GROUPING (additive, non-breaking) ---
+
+const getPurchaseGroupKey = (f) => {
+  const a = f.address || {};
+  return [a.streetNumber, a.streetName, a.city, a.state]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+};
+
+const isPurchaseFile = (f) =>
+  !isRental(f) && !!f.address; // purchase files always have address
+
+const isPurchaseChildFile = (f) =>
+  isPurchaseFile(f) && !isPurchasePrimaryContract(f);
+
+
+
+// ✅ Correct purchase detection (NO MORE length hacks)
+const isPurchaseContractRow = (f) => {
+  if (!f?.s3Key) return false;
+
+  // If transactionType exists, respect it
+  if (f.transactionType) {
+    if (f.transactionType === "RENTAL") return false;
+    // Purchase record for the primary contract we list should be Contract.pdf inside folder
+    return String(f.fileName || "").toLowerCase() === "contract.pdf";
+  }
+
+  // If backend does not send transactionType, infer:
+  // rental paths contain " Rental/" folder
+  const s3 = String(f.s3Key);
+  const isRentalPath = / rental\//i.test(s3);
+
+  // purchase primary contract should end with "/Contract.pdf"
+  const endsWithContractPdf = /\/contract\.pdf$/i.test(s3);
+
+  return !isRentalPath && endsWithContractPdf;
+};
+
+// Upload helper: presign + PUT
+const presignAndPut = async ({
+  apiUrl,
+  token,
+  address,
+  transactionType,
+  fileRole,
+  agentName,
+  file,
+  filename,
+}) => {
+  const presignRes = await fetch(`${apiUrl}/presign`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      filename,
+      contentType: file.type,
+      fileSize: file.size,
+      agentName,
+      address,
+      transactionType,
+      fileRole,
+      // tenantBrokerInvolved not needed for PURCHASE roles
+    }),
+  });
+
+  const presignData = await presignRes.json().catch(() => null);
+
+  if (!presignRes.ok || !presignData?.url) {
+    throw new Error(presignData?.message || "Presign failed");
+  }
+
+  const putRes = await fetch(presignData.url, {
+    method: "PUT",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+
+  if (!putRes.ok) {
+    throw new Error(`Upload failed (${putRes.status})`);
+  }
+
+  return presignData.key; // s3Key
+};
 
 /* =========================
    COMPONENT
@@ -99,25 +204,19 @@ function DashboardPage({ user, signOut }) {
   const router = useRouter();
 
   const [profile, setProfile] = useState(null);
-
   const [files, setFiles] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
-
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const [viewFilter, setViewFilter] = useState("recent");
   const [search, setSearch] = useState("");
 
-  const FETCH_LIMIT = 10;   // how many we fetch from backend
-  const DISPLAY_LIMIT = 3; // how many we show initially
+  const FETCH_LIMIT = 10;
+  const DISPLAY_LIMIT = 3;
   const limit = FETCH_LIMIT;
 
   const [displayCount, setDisplayCount] = useState(3);
-
-  /* =========================
-     LOAD PROFILE
-  ========================= */
 
   useEffect(() => {
     Auth.currentAuthenticatedUser()
@@ -130,15 +229,9 @@ function DashboardPage({ user, signOut }) {
       ? `${profile.given_name} ${profile.family_name}`
       : profile?.email?.split("@")[0] || "Agent";
 
-  //const agentNameKey = fullName.replace(/\s+/g, "-");
-
   /* =========================
      FETCH CONTRACTS
   ========================= */
-  //console.log(
-   // "NEXT_PUBLIC_API_URL at runtime:",
-   // process.env.NEXT_PUBLIC_API_URL
-  //);
 
   const fetchContracts = useCallback(
     async ({ cursor = null, append = false } = {}) => {
@@ -186,67 +279,57 @@ function DashboardPage({ user, signOut }) {
     if (!user) return;
     setFiles([]);
     setNextCursor(null);
-    setDisplayCount(3); // 🔑 reset visible items
+    setDisplayCount(3);
     fetchContracts({ append: false });
   }, [user, viewFilter, fetchContracts]);
 
   /* =========================
-     SEARCH FILTER (client-side)
+     SEARCH FILTER
   ========================= */
 
+  const nameIncludes = (name, q) => (name || "").toLowerCase().includes(q);
+
   const visibleFiles = useMemo(() => {
+  // Keep your existing filtering rules
   const base = files.filter((f) => {
-  const name = f.fileName?.toLowerCase() || "";
+    const name = f.fileName?.toLowerCase() || "";
 
-    // 🚫 Hide Rental W-9 from agent view (back office only)
-    if (name.includes("rental_w9") || name.includes("rentalw9")) {
-      return false;
-    }
-
-    // 🚫 Hide commission disbursement artifacts (future-proof)
-    if (name.includes("comm_disbursement")) {
-      return false;
-    }
+    // Existing behavior preserved
+    if (name.includes("rental_w9") || name.includes("rentalw9")) return false;
 
     return true;
   });
 
-  if (!search) return base;
+  // Group purchase files by property
+  const purchaseGroups = {};
+  const rentals = [];
 
-  const q = search.toLowerCase();
-  return base.filter((f) => {
-    const addr = f.address || {};
-    return (
-      nameIncludes(f.fileName, q) ||
-      `${addr.streetNumber || ""} ${addr.streetName || ""}`
-        .toLowerCase()
-        .includes(q) ||
-      addr.city?.toLowerCase().includes(q) ||
-      addr.state?.toLowerCase().includes(q)
-    );
+  base.forEach((f) => {
+    if (isRental(f)) {
+      rentals.push(f);
+    } else if (isPurchaseFile(f)) {
+      const key = getPurchaseGroupKey(f);
+      purchaseGroups[key] = purchaseGroups[key] || [];
+      purchaseGroups[key].push(f);
+    }
   });
+
+  return { rentals, purchaseGroups };
 }, [files, search]);
 
-const [autoAdjusted, setAutoAdjusted] = useState(false);
 
-useEffect(() => {
-  if (viewFilter !== "recent") return;
-  if (loading) return;
-  if (autoAdjusted) return;
+  const [autoAdjusted, setAutoAdjusted] = useState(false);
 
-  // 🔒 Only evaluate fallback once, on initial load
-  if (files.length < DISPLAY_LIMIT) {
-    setAutoAdjusted(true);
-    setViewFilter("month");
-  }
-}, [viewFilter, files.length, loading, autoAdjusted]);
+  useEffect(() => {
+    if (viewFilter !== "recent") return;
+    if (loading) return;
+    if (autoAdjusted) return;
 
-
-// small helper (optional but cleaner)
-const nameIncludes = (name, q) =>
-  (name || "").toLowerCase().includes(q);
-
-
+    if (files.length < DISPLAY_LIMIT) {
+      setAutoAdjusted(true);
+      setViewFilter("month");
+    }
+  }, [viewFilter, files.length, loading, autoAdjusted]);
 
   /* =========================
      STAGE MODAL
@@ -258,7 +341,9 @@ const nameIncludes = (name, q) =>
   const [stageForm, setStageForm] = useState({});
 
   const openStageModal = (f) => {
-    if (isRental(f)) return; // 🚫 rentals skip stages entirely
+    if (isRental(f)) return;
+    if (f.stage === "CLOSED") return;
+
     setSelected(f);
     setNextStage(getNextStage(f.stage));
     setStageForm({});
@@ -273,7 +358,7 @@ const nameIncludes = (name, q) =>
   };
 
   /* =========================
-     OPTIMISTIC STAGE UPDATE
+     SAVE STAGE + OPTIONAL UPLOADS
   ========================= */
 
   const saveStage = async () => {
@@ -286,21 +371,94 @@ const nameIncludes = (name, q) =>
     try {
       const session = await Auth.currentSession();
       const token = session.getAccessToken().getJwtToken();
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/contract/stage`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            contractId: selected.contractId, // ✅ full "Raj-Patel/...pdf"
-            stage: nextStage,
-            stageData: stageForm || {},
-          }),
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+      // ✅ Identify PURCHASE primary contract safely
+      const isPurchase =
+        !isRental(selected) &&
+        String(selected?.fileName || "").toLowerCase() === "contract.pdf" &&
+        !!selected?.address;
+
+      // ✅ If moving to CLOSED for PURCHASE: upload ALTA + comm json first
+      if (nextStage === "CLOSED" && isPurchase) {
+        const idPayload = session.getIdToken().payload;
+
+        const agentFolder =
+          idPayload.given_name && idPayload.family_name
+            ? `${idPayload.given_name}-${idPayload.family_name}`.replace(/\s+/g, "-")
+            : (idPayload.email || "").split("@")[0];
+
+        // 1️⃣ ALTA upload (optional)
+        if (stageForm?.altaFile instanceof File) {
+          const altaKey = await presignAndPut({
+            apiUrl,
+            token,
+            address: selected.address,
+            transactionType: "PURCHASE",
+            fileRole: "ALTA",
+            agentName: agentFolder,
+            file: stageForm.altaFile,
+            filename: "ALTA.pdf",
+          });
+
+          // Replace File object with reference only
+          stageForm.altaFile = { s3Key: altaKey };
         }
-      );
+
+        // 2️⃣ Commission Disbursement JSON (only if meaningful data exists)
+        if (
+          stageForm.commissionNote ||
+          stageForm.commissionAmount ||
+          stageForm.adminFee ||
+          stageForm.titleCompany ||
+          stageForm.closingDate
+        ) {
+          const commJson = {
+            contractId: selected.contractId,
+            property: selected.address,
+            closingDate: stageForm.closingDate || "",
+            titleCompany: stageForm.titleCompany || "",
+            commissionAmount: stageForm.commissionAmount || "",
+            adminFee: stageForm.adminFee || "",
+            commissionNote: stageForm.commissionNote || "",
+            createdAt: new Date().toISOString(),
+          };
+
+          const jsonBlob = new Blob([JSON.stringify(commJson, null, 2)], {
+            type: "application/json",
+          });
+          const jsonFile = new File([jsonBlob], "Comm_Disbursement.json", {
+            type: "application/json",
+          });
+
+          const commKey = await presignAndPut({
+            apiUrl,
+            token,
+            address: selected.address,
+            transactionType: "PURCHASE",
+            fileRole: "COMM_DISBURSEMENT",
+            agentName: agentFolder,
+            file: jsonFile,
+            filename: "Comm_Disbursement.json",
+          });
+
+          stageForm.commDisbursement = { s3Key: commKey };
+        }
+      }
+
+      // ✅ NOW save stage metadata (this was missing before)
+      const res = await fetch(`${apiUrl}/contract/stage`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contractId: selected.contractId,
+          stage: nextStage,
+          stageData: stageForm || {},
+        }),
+      });
 
       if (!res.ok) {
         const t = await res.text();
@@ -308,8 +466,7 @@ const nameIncludes = (name, q) =>
         throw new Error("Stage update failed");
       }
 
-      if (!res.ok) throw new Error("Stage update failed");
-
+      // Refresh dashboard
       fetchContracts();
     } catch (err) {
       console.error(err);
@@ -319,6 +476,7 @@ const nameIncludes = (name, q) =>
     }
   };
 
+
   /* =========================
      RENDER
   ========================= */
@@ -326,9 +484,7 @@ const nameIncludes = (name, q) =>
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
       <div className="bg-white shadow-xl p-10 rounded-xl w-full max-w-3xl space-y-6">
-        <h1 className="text-3xl font-bold text-center">
-          Welcome {fullName}
-        </h1>
+        <h1 className="text-3xl font-bold text-center">Welcome {fullName}</h1>
 
         <button
           onClick={() => router.push("/upload")}
@@ -339,13 +495,13 @@ const nameIncludes = (name, q) =>
 
         <div className="flex gap-2">
           <select
-              value={viewFilter}
-              onChange={(e) => {
-                setViewFilter(e.target.value);
-                setAutoAdjusted(false); // 🔑 allow fallback again
-              }}
-              className="border px-2 py-1 text-sm rounded"
-            >
+            value={viewFilter}
+            onChange={(e) => {
+              setViewFilter(e.target.value);
+              setAutoAdjusted(false);
+            }}
+            className="border px-2 py-1 text-sm rounded"
+          >
             <option value="recent">Recent</option>
             <option value="month">This Month</option>
             <option value="quarter">This Quarter</option>
@@ -374,55 +530,84 @@ const nameIncludes = (name, q) =>
 
         {!loading && (
           <div className="space-y-2">
-            {visibleFiles.slice(0, displayCount).map((f) => (
-              <div
-                key={f.contractId}
-                className="flex justify-between items-center bg-slate-50 p-3 rounded border"
-              >
-                <div>
-                  <a
-                    href={f.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-blue-600 underline"
-                  >
-                    {displayFileName(f.fileName)}
-                  </a>
-                  <div className="text-xs text-slate-500">
-                    {f.lastModified
-                      ? new Date(f.lastModified).toLocaleDateString()
-                      : ""}
-                  </div>
-                </div>
-                
-                {!isRental(f) && (
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs px-2 py-1 rounded bg-slate-200">
-                      {STAGE_LABELS[f.stage]}
-                    </span>
+            {/* PURCHASE FOLDERS */}
+{Object.entries(visibleFiles.purchaseGroups).map(([key, group]) => {
+  const primary = group.find(isPurchasePrimaryContract);
+  if (!primary) return null;
 
-                    {/* 🔒 Disable stage updates once CLOSED */}
-                    {f.stage !== "CLOSED" && (
-                      <button
-                        onClick={() => openStageModal(f)}
-                        className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
-                      >
-                        Update Stage
-                      </button>
-                    )}
-                  </div>
-                )}
+  return (
+    <div key={key} className="bg-slate-50 border rounded p-3 space-y-2">
+      {/* Folder header */}
+      <div className="flex justify-between items-center">
+        <div className="font-semibold text-slate-800">
+          {getPurchaseLabelFromAddress(primary.address)}
+        </div>
 
-              </div>
-            ))}
+        <div className="flex items-center gap-2">
+          <span className="text-xs px-2 py-1 rounded bg-slate-200">
+            {STAGE_LABELS[primary.stage]}
+          </span>
+
+          {primary.stage !== "CLOSED" && (
+            <button
+              onClick={() => openStageModal(primary)}
+              className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+            >
+              Update Stage
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Files inside folder */}
+      <div className="pl-4 space-y-1">
+        {group.map((f) => (
+          <div key={f.contractId} className="text-sm">
+            <a
+              href={f.url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-600 underline"
+            >
+              {displayFileName(f.fileName)}
+            </a>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+})}
+
+{/* RENTALS (unchanged behavior) */}
+{visibleFiles.rentals.map((f) => (
+  <div
+    key={f.contractId}
+    className="flex justify-between items-center bg-slate-50 p-3 rounded border"
+  >
+    <div>
+      <a
+        href={f.url}
+        target="_blank"
+        rel="noreferrer"
+        className="text-blue-600 underline"
+      >
+        {displayFileName(f.fileName)}
+      </a>
+      <div className="text-xs text-slate-500">
+        {f.lastModified
+          ? new Date(f.lastModified).toLocaleDateString()
+          : ""}
+      </div>
+    </div>
+  </div>
+))}
+
           </div>
         )}
 
         {!loading && visibleFiles.length > displayCount && (
           <button
-            onClick={() => {
-              setDisplayCount((c) => c + DISPLAY_LIMIT);
-            }}
+            onClick={() => setDisplayCount((c) => c + DISPLAY_LIMIT)}
             className="w-full border rounded py-2"
           >
             Load More
@@ -468,9 +653,7 @@ const nameIncludes = (name, q) =>
                   <div className="space-y-2">
                     <select
                       className="w-full border px-3 py-2 rounded"
-                      onChange={(e) =>
-                        setStageForm({ holder: e.target.value })
-                      }
+                      onChange={(e) => setStageForm({ holder: e.target.value })}
                     >
                       <option value="">EMD Held By</option>
                       <option value="IKON_REALTY">Ikon Realty</option>
@@ -486,15 +669,12 @@ const nameIncludes = (name, q) =>
                       )}
                       <option value="OTHER">Other</option>
                     </select>
-                     {/* ✅ NEW: Other Holder Textbox */}
+
                     {stageForm.holder === "OTHER" && (
                       <input
                         type="text"
                         maxLength={60}
-                        placeholder="Enter EMD holder name (e.g. Listing or Buyer Brokerage
-                        
-                        
-                        )"
+                        placeholder="Enter EMD holder name"
                         className="w-full border px-3 py-2 rounded"
                         value={stageForm.otherHolder || ""}
                         onChange={(e) =>
@@ -505,6 +685,7 @@ const nameIncludes = (name, q) =>
                         }
                       />
                     )}
+
                     {(EMD_LINKS[stageForm.holder] || []).map((l) => (
                       <a
                         key={l.url}
@@ -523,24 +704,41 @@ const nameIncludes = (name, q) =>
               {nextStage === "CONTINGENCIES" && (
                 <div className="space-y-2">
                   {CONTINGENCY_TYPES.map((c) => (
-                    <label key={c.value} className="flex gap-2 text-sm">
+                    <label key={c.value} className="flex gap-2 text-sm items-center">
                       <input
                         type="checkbox"
+                        checked={(stageForm.types || []).includes(c.value)}
                         onChange={(e) =>
                           setStageForm((prev) => {
                             const set = new Set(prev.types || []);
-                            e.target.checked
-                              ? set.add(c.value)
-                              : set.delete(c.value);
-                            return { ...prev, types: Array.from(set) };
+                            e.target.checked ? set.add(c.value) : set.delete(c.value);
+
+                            // If "OTHER" gets unchecked, clear the text
+                            const next = { ...prev, types: Array.from(set) };
+                            if (!set.has("OTHER")) delete next.otherText;
+                            return next;
                           })
                         }
                       />
                       {c.label}
                     </label>
                   ))}
+
+                  {(stageForm.types || []).includes("OTHER") && (
+                    <input
+                      type="text"
+                      maxLength={100}
+                      placeholder="Specify other contingency (max 100 chars)"
+                      className="w-full border px-3 py-2 rounded text-sm"
+                      value={stageForm.otherText || ""}
+                      onChange={(e) =>
+                        setStageForm((p) => ({ ...p, otherText: e.target.value }))
+                      }
+                    />
+                  )}
                 </div>
               )}
+
 
               {nextStage === "CLOSED" && (
                 <div className="space-y-2">
@@ -548,10 +746,7 @@ const nameIncludes = (name, q) =>
                     type="date"
                     className="w-full border px-3 py-2 rounded"
                     onChange={(e) =>
-                      setStageForm((p) => ({
-                        ...p,
-                        closingDate: e.target.value,
-                      }))
+                      setStageForm((p) => ({ ...p, closingDate: e.target.value }))
                     }
                   />
                   <input
@@ -559,10 +754,7 @@ const nameIncludes = (name, q) =>
                     placeholder="Title Company Name"
                     className="w-full border px-3 py-2 rounded"
                     onChange={(e) =>
-                      setStageForm((p) => ({
-                        ...p,
-                        titleCompany: e.target.value,
-                      }))
+                      setStageForm((p) => ({ ...p, titleCompany: e.target.value }))
                     }
                   />
                   <input
@@ -581,50 +773,45 @@ const nameIncludes = (name, q) =>
                     placeholder="Admin Fee (optional)"
                     className="w-full border px-3 py-2 rounded"
                     onChange={(e) =>
-                      setStageForm((p) => ({
-                        ...p,
-                        adminFee: e.target.value,
-                      }))
+                      setStageForm((p) => ({ ...p, adminFee: e.target.value }))
                     }
                   />
-                
-                {/* ALTA Upload */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Upload ALTA / Settlement Statement (PDF)
-                  </label>
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    className="w-full border px-3 py-2 rounded text-sm"
-                    onChange={(e) =>
-                      setStageForm((p) => ({
-                        ...p,
-                        altaFile: e.target.files?.[0] || null,
-                      }))
-                    }
-                  />
-                </div>
 
-                {/* Commission Instructions */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">
-                    Commission Instructions (for Admin)
-                  </label>
-                  <textarea
-                    rows={4}
-                    placeholder="Example: 70/30 split, referral fee to XYZ Brokerage, cap applied, etc."
-                    className="w-full border px-3 py-2 rounded text-sm"
-                    value={stageForm.commissionNote || ""}
-                    onChange={(e) =>
-                      setStageForm((p) => ({
-                        ...p,
-                        commissionNote: e.target.value,
-                      }))
-                    }
-                  />
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Upload ALTA / Settlement Statement (PDF)
+                    </label>
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      className="w-full border px-3 py-2 rounded text-sm"
+                      onChange={(e) =>
+                        setStageForm((p) => ({
+                          ...p,
+                          altaFile: e.target.files?.[0] || null,
+                        }))
+                      }
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">
+                      Commission Instructions (for Admin)
+                    </label>
+                    <textarea
+                      rows={4}
+                      placeholder="Example: referral fee, split, etc."
+                      className="w-full border px-3 py-2 rounded text-sm"
+                      value={stageForm.commissionNote || ""}
+                      onChange={(e) =>
+                        setStageForm((p) => ({
+                          ...p,
+                          commissionNote: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
               )}
 
               <div className="flex justify-end gap-2 pt-3">
@@ -649,10 +836,4 @@ const nameIncludes = (name, q) =>
   );
 }
 
-/* =========================
-   DISABLE SSR
-========================= */
-
-export default dynamic(() => Promise.resolve(DashboardPage), {
-  ssr: false,
-});
+export default dynamic(() => Promise.resolve(DashboardPage), { ssr: false });

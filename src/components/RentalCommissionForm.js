@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 
 const PAYMENT_METHODS = [
   "Cashier Check",
@@ -32,36 +32,44 @@ export default function RentalCommissionForm({
   // If no tenant broker, force percent to 0
   useEffect(() => {
     if (!hasTenantBroker) {
-      // No tenant broker → force 0%
       setPercent(0);
     } else {
-      // Tenant broker selected → restore default ONLY if it was 0
       setPercent((prev) => (prev === 0 ? 25 : prev));
     }
   }, [hasTenantBroker]);
 
-
   const tenantAmount = useMemo(() => {
     if (!hasTenantBroker) return 0;
-    return Math.round((parsedTotal * percent) / 100 * 100) / 100;
+    return Math.round((parsedTotal * percent) * 100 / 10000);
   }, [parsedTotal, percent, hasTenantBroker]);
 
   const officeAmount = useMemo(() => {
     return Math.round((parsedTotal - tenantAmount) * 100) / 100;
   }, [parsedTotal, tenantAmount]);
 
-  // Bubble up structured payload
+  /**
+   * 🔒 SAFE EMITTER
+   * Only notify parent when payload actually changes
+   */
+  const lastSentRef = useRef(null);
+
   useEffect(() => {
-    onChange?.({
+    const payload = {
       totalReceived: parsedTotal,
       paymentMethod: method,
-      paymentDate,                 // ✅ NEW
+      paymentDate,
       hasTenantBroker,
       tenantAgentPercent: hasTenantBroker ? percent : 0,
       tenantAgentAmount: tenantAmount,
       officeAmount,
       specialInstructions: notes?.trim() || null,
-    });
+    };
+
+    const serialized = JSON.stringify(payload);
+    if (lastSentRef.current === serialized) return;
+
+    lastSentRef.current = serialized;
+    onChange?.(payload);
   }, [
     parsedTotal,
     method,
@@ -118,8 +126,8 @@ export default function RentalCommissionForm({
           type="date"
           className="w-full border rounded px-3 py-2 text-sm"
           value={paymentDate}
-          min={pastLimitISO()}   // ⏪ max 30 days back
-          max={todayISO()}      // 🚫 no future dates
+          min={pastLimitISO()}
+          max={todayISO()}
           onChange={(e) => setPaymentDate(e.target.value)}
         />
         <div className="text-xs text-slate-500 mt-1">
@@ -127,7 +135,7 @@ export default function RentalCommissionForm({
         </div>
       </div>
 
-      {/* Tenant Agent Commission (ONLY if broker involved) */}
+      {/* Tenant Agent Commission */}
       {hasTenantBroker && (
         <div>
           <label className="text-xs text-slate-600">
