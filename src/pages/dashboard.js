@@ -84,6 +84,7 @@ const isRental = (contract) =>
 const VIEW_FALLBACKS = ["recent", "month", "quarter", "year"];
 const MIN_VISIBLE = 3;
 
+
 /* =========================
    COMPONENT
 ========================= */
@@ -105,6 +106,8 @@ function DashboardPage({ user, signOut }) {
   const FETCH_LIMIT = 10;   // how many we fetch from backend
   const DISPLAY_LIMIT = 3; // how many we show initially
   const limit = FETCH_LIMIT;
+
+  const [displayCount, setDisplayCount] = useState(3);
 
   /* =========================
      LOAD PROFILE
@@ -175,6 +178,7 @@ function DashboardPage({ user, signOut }) {
     if (!user) return;
     setFiles([]);
     setNextCursor(null);
+    setDisplayCount(3); // 🔑 reset visible items
     fetchContracts({ append: false });
   }, [user, viewFilter, fetchContracts]);
 
@@ -215,29 +219,19 @@ function DashboardPage({ user, signOut }) {
   });
 }, [files, search]);
 
-const VIEW_FALLBACKS = ["recent", "month", "quarter", "year"];
-const MIN_VISIBLE = 3;
-
 const [autoAdjusted, setAutoAdjusted] = useState(false);
 
 useEffect(() => {
-  // Only auto-adjust from Recent
   if (viewFilter !== "recent") return;
-
-  // Wait for data
   if (loading) return;
-
-  // If we already have enough total items, do nothing
-  if (files.length >= DISPLAY_LIMIT) return;
-
-  // Prevent repeated switching
   if (autoAdjusted) return;
 
-  // Auto fallback chain
-  setAutoAdjusted(true);
-  setViewFilter("month");
+  // 🔒 Only evaluate fallback once, on initial load
+  if (files.length < DISPLAY_LIMIT) {
+    setAutoAdjusted(true);
+    setViewFilter("month");
+  }
 }, [viewFilter, files.length, loading, autoAdjusted]);
-
 
 
 // small helper (optional but cleaner)
@@ -366,7 +360,7 @@ const nameIncludes = (name, q) =>
 
         {!loading && (
           <div className="space-y-2">
-            {visibleFiles.slice(0, DISPLAY_LIMIT).map((f) => (
+            {visibleFiles.slice(0, displayCount).map((f) => (
               <div
                 key={f.contractId}
                 className="flex justify-between items-center bg-slate-50 p-3 rounded border"
@@ -406,15 +400,14 @@ const nameIncludes = (name, q) =>
           </div>
         )}
 
-        {!loading && nextCursor && (
+        {!loading && visibleFiles.length > displayCount && (
           <button
-            onClick={() =>
-              fetchContracts({ cursor: nextCursor, append: true })
-            }
-            disabled={loadingMore}
+            onClick={() => {
+              setDisplayCount((c) => c + DISPLAY_LIMIT);
+            }}
             className="w-full border rounded py-2"
           >
-            {loadingMore ? "Loading..." : "Load More"}
+            Load More
           </button>
         )}
 
