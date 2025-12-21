@@ -133,8 +133,8 @@ export default function FileUpload() {
             filename,
             contentType: fileToUpload.type,
             fileSize: fileToUpload.size,
-            address,
             agentName,
+            address,
             transactionType,
             tenantBrokerInvolved,
             fileRole, // 🔑 NEW: tells backend what this file represents
@@ -188,28 +188,38 @@ export default function FileUpload() {
 
       // ✅ Save rental commission disbursement JSON (AFTER uploads)
       if (transactionType === "RENTAL" && rentalCommission) {
-        await fetch(`${API_URL}/contracts/rental/commission`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            address,
-            tenantBrokerInvolved,
-            rentalCommission,
-          }),
-        });
+        try {
+          const res = await fetch(`${API_URL}/contracts/rental/commission`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              address,
+              tenantBrokerInvolved,
+              rentalCommission,
+              agentName, // 🔑 REQUIRED for consistent S3 path
+            }),
+          });
+
+          if (!res.ok) {
+            console.error("Commission save failed", await res.text());
+          }
+        } catch (e) {
+          console.error("Commission save error", e);
+        }
       }
 
-
       toast.success("Upload complete!");
-      router.replace("/dashboard");
+      //router.replace("/dashboard");
     } catch (err) {
       console.error(err);
       toast.error(err.message || "Unexpected upload error");
     } finally {
       setUploading(false);
+      // 🔒 Guarantee exit from upload screen
+      router.replace("/dashboard");
     }
   };
 
