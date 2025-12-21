@@ -168,9 +168,9 @@ export default function FileUpload() {
 
       // Upload lease or purchase contract
       const primaryName =
-        transactionType === "RENTAL"
-          ? generateRentalLeaseName(address)
-          : generateFilename(address, file.name, transactionType);
+      transactionType === "RENTAL"
+        ? generateRentalLeaseName(address)
+        : "Contract.pdf"; // 🔒 PURCHASE structure handled by backend only
 
       await presignAndUpload(
         primaryName,
@@ -367,12 +367,13 @@ export default function FileUpload() {
 
       {address && transactionType === "PURCHASE" && file && (
         <div className="bg-slate-50 p-3 rounded text-sm">
-          <div className="text-xs text-slate-500">S3 file name</div>
+          <div className="text-xs text-slate-500">S3 file location</div>
           <div className="font-semibold">
-            {generateFilename(address, file.name, transactionType)}
+            {`${address.streetNumber} ${address.streetName} ${address.city} ${address.state}/Contract.pdf`}
           </div>
         </div>
       )}
+
 
       <button
         onClick={upload}
