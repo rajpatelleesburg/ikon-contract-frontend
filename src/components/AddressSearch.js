@@ -11,6 +11,27 @@ const clean = (s) =>
     .replace(/[^a-zA-Z0-9 .-]/g, "")
     .trim();
 
+/**
+ * 🔒 Defensive city resolver
+ * Google Places does NOT always return `locality` for small towns.
+ * This guarantees we never lose the city the user actually selected.
+ */
+const resolveCity = (r) => {
+  if (r?.city) return clean(r.city);
+
+  // Fallback from formatted/description string
+  const text = r?.formatted || r?.description;
+  if (text) {
+    // Example: "64 Stocks Street, Lovettsville, VA 20180"
+    const parts = text.split(",");
+    if (parts.length >= 2) {
+      return clean(parts[1]);
+    }
+  }
+
+  return "";
+};
+
 export default function AddressSearch({ value, onChange }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState([]);
@@ -21,6 +42,9 @@ export default function AddressSearch({ value, onChange }) {
     [q, value]
   );
 
+  /* =========================
+     SEARCH (debounced)
+  ========================= */
   useEffect(() => {
     const run = async () => {
       if (!canSearch) {
@@ -45,6 +69,9 @@ export default function AddressSearch({ value, onChange }) {
     return () => clearTimeout(t);
   }, [q, canSearch]);
 
+  /* =========================
+     SELECT RESULT
+  ========================= */
   const pick = (r) => {
     if (!LICENSED.includes(r.state)) {
       toast.error("Only VA, MD, DC addresses are allowed.");
@@ -65,15 +92,15 @@ export default function AddressSearch({ value, onChange }) {
       streetNumber,
       streetName,
       state: r.state,
-      city: r.city,
-      zip: r.zip,
+      city: resolveCity(r), // ✅ GUARANTEED CITY
+      zip: r.zip || "",
     };
 
-    // ✅ Set selected value
+    // ✅ Persist authoritative address
     onChange(selected);
 
     // ✅ Lock input to selected address
-    setQ(`${streetNumber} ${streetName}, ${r.state}`);
+    setQ(`${streetNumber} ${streetName}, ${selected.city || ""} ${r.state}`.trim());
 
     // ✅ Clear suggestions immediately
     setResults([]);
@@ -82,6 +109,9 @@ export default function AddressSearch({ value, onChange }) {
     inputRef.current?.blur();
   };
 
+  /* =========================
+     CLEAR SELECTION
+  ========================= */
   const clearSel = () => {
     onChange(null);
     setQ("");
@@ -136,7 +166,7 @@ export default function AddressSearch({ value, onChange }) {
                 {r.streetNumber} {r.streetName}
               </div>
               <div className="text-xs text-slate-500">
-                {r.city}, {r.state} {r.zip}
+                {resolveCity(r)}, {r.state} {r.zip}
               </div>
             </button>
           ))}
@@ -148,7 +178,7 @@ export default function AddressSearch({ value, onChange }) {
         <div className="rounded bg-slate-50 p-3">
           <div className="text-xs text-slate-500">Stored format</div>
           <div className="text-sm font-semibold text-slate-800">
-            {value.streetNumber} {value.streetName} ({value.state})
+            {value.streetNumber} {value.streetName} {value.city} ({value.state})
           </div>
         </div>
       )}

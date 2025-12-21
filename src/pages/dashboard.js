@@ -14,7 +14,6 @@ const STAGE_ORDER = [
   "EMD_COLLECTED",
   "CONTINGENCIES",
   "CLOSED",
-  "COMMISSION",
 ];
 
 const STAGE_LABELS = {
@@ -22,16 +21,15 @@ const STAGE_LABELS = {
   EMD_COLLECTED: "Collect EMD",
   CONTINGENCIES: "Contingencies",
   CLOSED: "Closed",
-  COMMISSION: "Commission",
 };
 
 const NEXT_STAGES = {
   UPLOADED: ["EMD_COLLECTED"],
   EMD_COLLECTED: ["CONTINGENCIES"],
   CONTINGENCIES: ["CLOSED"],
-  CLOSED: ["COMMISSION"],
-  COMMISSION: [],
+  CLOSED: [],
 };
+
 
 const getNextStage = (stage) => NEXT_STAGES[stage]?.[0] || "";
 
@@ -402,12 +400,16 @@ const nameIncludes = (name, q) =>
                     <span className="text-xs px-2 py-1 rounded bg-slate-200">
                       {STAGE_LABELS[f.stage]}
                     </span>
-                    <button
-                      onClick={() => openStageModal(f)}
-                      className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
-                    >
-                      Update Stage
-                    </button>
+
+                    {/* 🔒 Disable stage updates once CLOSED */}
+                    {f.stage !== "CLOSED" && (
+                      <button
+                        onClick={() => openStageModal(f)}
+                        className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+                      >
+                        Update Stage
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -585,7 +587,44 @@ const nameIncludes = (name, q) =>
                       }))
                     }
                   />
+                
+                {/* ALTA Upload */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Upload ALTA / Settlement Statement (PDF)
+                  </label>
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    className="w-full border px-3 py-2 rounded text-sm"
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        altaFile: e.target.files?.[0] || null,
+                      }))
+                    }
+                  />
                 </div>
+
+                {/* Commission Instructions */}
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Commission Instructions (for Admin)
+                  </label>
+                  <textarea
+                    rows={4}
+                    placeholder="Example: 70/30 split, referral fee to XYZ Brokerage, cap applied, etc."
+                    className="w-full border px-3 py-2 rounded text-sm"
+                    value={stageForm.commissionNote || ""}
+                    onChange={(e) =>
+                      setStageForm((p) => ({
+                        ...p,
+                        commissionNote: e.target.value,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
               )}
 
               <div className="flex justify-end gap-2 pt-3">
