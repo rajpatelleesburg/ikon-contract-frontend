@@ -30,6 +30,37 @@ const ATTENTION_REASON = {
   CONTINGENCIES: "Closing approaching",
 };
 
+/* ======================================================
+   PURCHASE GROUPING HELPERS (ADMIN VIEW)
+====================================================== */
+
+const isPurchasePrimaryContract = (f) =>
+  !f.isRental &&
+  String(f.filename || "").toLowerCase() === "contract.pdf" &&
+  !!f.address;
+
+const isPurchaseChildFile = (f) =>
+  !f.isRental &&
+  !isPurchasePrimaryContract(f);
+
+const getPurchaseGroupKey = (f) => {
+  const a = f.address || {};
+  return [a.streetNumber, a.streetName, a.city, a.state]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+};
+
+const getPurchaseLabelFromAddress = (addr) => {
+  if (!addr) return "Purchase Contract";
+  return [addr.streetNumber, addr.streetName, addr.city, addr.state]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+
 const getAttentionReason = (stage) => ATTENTION_REASON[stage] || null;
 
 
@@ -74,7 +105,7 @@ export default function AdminDashboard({ user, signOut }) {
       const idToken = session.getIdToken().getJwtToken();
 
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts`,
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/meta`,
         {
           headers: { Authorization: `Bearer ${idToken}` },
         }
@@ -93,50 +124,113 @@ export default function AdminDashboard({ user, signOut }) {
        */
       const groupedData = {};
 
-      files.forEach((f) => {
-        const key = f.key || "";
-        const parts = key.split("/");
-        const agentName =
-          parts.length > 1
-            ? parts[0].replace(/-/g, " ")
-            : "Unknown Agent";
+      const items = Array.isArray(data.items) ? data.items : [];
 
-        const stage = f.stage || "UPLOADED";
+      const groupedByAgent = {};
 
-        const file = {
-          key,
-          filename: parts.length > 1 ? parts[1] : "Contract",
-          lastModified: f.lastModified,
-          url: f.url,
-          downloadUrl: f.url,
+      items.forEach((c) => {
+        const agent = c.agent || "Unknown Agent";
 
-          // ✅ new admin-visible metadata
-          stage,
-          stageLabel: STAGE_LABELS[stage],
-          attention: getAttentionReason(stage),
+        groupedByAgent[agent] ||= [];
 
-          // ✅ ADD THIS
-          emdHolder:
-            f.stageData?.holder === "OTHER"
-              ? f.stageData?.otherHolder
-              : f.stageData?.holder || null,
+        if (c.transactionType === "PURCHASE") {
+          groupedByAgent[agent].push({
+            type: "PURCHASE",
+            label: [
+              c.address?.streetNumber,
+              c.address?.streetName,
+              c.address?.city,
+              c.address?.state,
+            ]
+              .filter(Boolean)
+              .join(" "),
+            stage: c.stage,
+            stageLabel: STAGE_LABELS[c.stage] || c.stage,
+            attention: getAttentionReason(c.stage),
+            lastModified: c.updatedAt || c.createdAt,
+            files: c.files.map((f) => ({
+              key: f.key,
+              filename: f.filename,
+              url: f.url,
+              downloadUrl: f.url,
+              size: f.size || 0,
+            })),
+          });
+        }
 
-          // ✅ future-ready (Sprint 3)
-          closingDate: f.stageData?.closed?.closingDate || null,
-        };
-
-        if (!groupedData[agentName]) groupedData[agentName] = [];
-        groupedData[agentName].push(file);
+        if (c.transactionType === "RENTAL") {
+          groupedByAgent[agent].push({
+            type: "RENTAL",
+            label: c.files[0]?.filename || "Rental",
+            stage: "UPLOADED",
+            stageLabel: "Uploaded",
+            attention: null,
+            lastModified: c.updatedAt || c.createdAt,
+            files: c.files.map((f) => ({
+              key: f.key,
+              filename: f.filename,
+              url: f.url,
+              downloadUrl: f.url,
+              size: f.size || 0,
+            })),
+          });
+        }
       });
 
-      Object.keys(groupedData).forEach((agent) => {
-        groupedData[agent].sort(
-          (a, b) =>
-            new Date(b.lastModified) - new Date(a.lastModified)
+      setGrouped(groupedByAgent);
+
+      Object.entries(groupedData).forEach(([agent, files]) => {
+        const purchases = {};
+        const rentals = [];
+
+        files.forEach((f) => {
+          if (f.isRental) {
+            rentals.push(f);
+          } else {
+            const key = getPurchaseGroupKey(f);
+            purchases[key] = purchases[key] || [];
+            purchases[key].push(f);
+          }
+        });
+
+        // Build final agent list
+        const finalList = [];
+
+        Object.entries(purchases).forEach(([key, group]) => {
+          const primary = group.find(isPurchasePrimaryContract);
+          if (!primary) return;
+
+          finalList.push({
+            type: "PURCHASE",
+            label: getPurchaseLabelFromAddress(primary.address),
+            stage: primary.stage,
+            stageLabel: primary.stageLabel,
+            attention: primary.attention,
+            files: group,
+            lastModified: primary.lastModified,
+          });
+        });
+
+        rentals.forEach((r) => {
+          finalList.push({
+            type: "RENTAL",
+            label: r.filename,
+            stage: r.stage,
+            stageLabel: r.stageLabel,
+            attention: r.attention,
+            files: [r],
+            lastModified: r.lastModified,
+          });
+        });
+
+        finalList.sort(
+          (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
         );
+
+        groupedByAgent[agent] = finalList;
       });
 
-      setGrouped(groupedData);
+      setGrouped(groupedByAgent);
 
       const expandState = {};
       Object.keys(groupedData).forEach((a) => (expandState[a] = true));
@@ -168,13 +262,26 @@ export default function AdminDashboard({ user, signOut }) {
 
   const flatFiles = useMemo(() => {
     const arr = [];
-    agentNames.forEach((agent) => {
-      (grouped[agent] || []).forEach((file) =>
-        arr.push({ agent, file })
-      );
+
+    Object.entries(grouped).forEach(([agent, items]) => {
+      items.forEach((item) => {
+        // PURCHASE → expand to files
+        if (item.type === "PURCHASE") {
+          item.files.forEach((f) => {
+            arr.push({ agent, file: f });
+          });
+        }
+
+        // RENTAL → already file-based
+        if (item.type === "RENTAL") {
+          arr.push({ agent, file: item.files[0] });
+        }
+      });
     });
+
     return arr;
-  }, [agentNames, grouped]);
+  }, [grouped]);
+
 
   // Everything below this point is UNCHANGED from your original file
   // (filters, summary, bulk delete, UI, modals, drag download)
@@ -313,13 +420,20 @@ export default function AdminDashboard({ user, signOut }) {
       const newFiltered = {};
       Object.keys(filtered).forEach((agent) => {
         const matching = filtered[agent].filter((f) => {
+          const labelText = (f.label || "").toLowerCase();
+
+          const fileText = (f.files || [])
+            .map((x) => x.filename || "")
+            .join(" ")
+            .toLowerCase();
+
           return (
             agent.toLowerCase().includes(q) ||
-            (f.filename || "").toLowerCase().includes(q) ||
-            (f.key || "").toLowerCase().includes(q) ||
-            JSON.stringify(f).toLowerCase().includes(q)
+            labelText.includes(q) ||
+            fileText.includes(q)
           );
         });
+
         if (matching.length > 0) newFiltered[agent] = matching;
       });
       filtered = newFiltered;
@@ -580,6 +694,7 @@ export default function AdminDashboard({ user, signOut }) {
             `application/octet-stream:${url}`
           );
         }}
+        
         windowInfo={windowInfo}
         allContractsSorted={allContractsSorted}
         focusedAgent={focusedAgent}
@@ -641,6 +756,18 @@ export default function AdminDashboard({ user, signOut }) {
           }}
         />
 
+        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
+        {showBackLink && (
+          <div className="pt-1 pb-2 animate-fade-in">
+            <button
+              onClick={handleBackToDashboard}
+              className="text-blue-600 hover:underline text-sm"
+            >
+              ← Back to Dashboard
+            </button>
+          </div>
+        )}
+
         {/* Summary results immediately under Tile 2 */}
         {hasSummaryResults && resultsSection}
 
@@ -662,18 +789,6 @@ export default function AdminDashboard({ user, signOut }) {
 
         {/* Filter results under Tile 3 */}
         {hasFilterResults && resultsSection}
-
-        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
-        {showBackLink && (
-          <div className="pt-1 pb-2 animate-fade-in">
-            <button
-              onClick={handleBackToDashboard}
-              className="text-blue-600 hover:underline text-sm"
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
-        )}
 
         {/* TILE 4: BULK CLEANUP (COLLAPSIBLE) */}
         <BulkDeleteTile
