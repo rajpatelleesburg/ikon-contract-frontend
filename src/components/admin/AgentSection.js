@@ -80,53 +80,78 @@ export default function AgentSection({
   /* =====================================================
      MODE: ALL CONTRACTS (FLAT, ADMIN SUMMARY VIEW)
   ====================================================== */
-  if (mode === "allContracts") {
-    return (
-      <section className="space-y-3 animate-fade-in">
-        <h2 className="text-sm font-semibold text-slate-800">
-          All Contracts (Newest first)
-        </h2>
+  /* =====================================================
+   MODE: ALL CONTRACTS (PROPERTY-LEVEL, ADMIN VIEW)
+===================================================== */
+    if (mode === "allContracts") {
+      return (
+        <section className="space-y-3 animate-fade-in">
+          <h2 className="text-sm font-semibold text-slate-800">
+            All Contracts (Newest first)
+          </h2>
 
-        {allContractsSorted.length === 0 ? (
-          <p className="text-sm text-slate-500">No contracts found.</p>
-        ) : (
-          <ul className="space-y-2">
-            {allContractsSorted.map(({ agent, file }) => (
-              <li key={`all-${file.key || file.filename || `${agent}-${file.lastModified}`}`}>
-                <div>
-                  <button
-                    onClick={() => window.open(file.url, "_blank")}
-                    className="text-blue-700 hover:underline text-left"
-                  >
-                    {highlight(file.filename)}
-                  </button>
+          {allContractsSorted.length === 0 ? (
+            <p className="text-sm text-slate-500">No contracts found.</p>
+          ) : (
+            <ul className="space-y-3">
+              {allContractsSorted.map(({ agent, contract }) => (
+                <li
+                  key={`all-${agent}-${contract.label}`}
+                  className="bg-white p-4 rounded-lg border"
+                >
+                  {/* HEADER */}
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="font-semibold text-slate-800">
+                        {highlight(contract.label)}
+                      </div>
 
-                  <div className="text-[11px] text-slate-500">
-                    {new Date(file.lastModified).toLocaleString()} —{" "}
-                    <span className="font-medium">{highlight(agent)}</span>
+                      <div className="text-[11px] text-slate-500">
+                        {new Date(contract.lastModified).toLocaleString()} —{" "}
+                        <span className="font-medium">{highlight(agent)}</span>
+                      </div>
+
+                      {renderStageMeta(contract)}
+                    </div>
+
+                    <button
+                      onClick={() => onDelete(agent, contract)}
+                      className="text-[11px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
+                    >
+                      Delete
+                    </button>
                   </div>
 
-                  {renderStageMeta(file)}
-                </div>
+                  {/* FILES */}
+                  <div className="mt-2 pl-4 space-y-1">
+                    {contract.files.map((file) => (
+                      <div
+                        key={file.key}
+                        className="flex justify-between items-center text-sm"
+                      >
+                        <a
+                          href={file.downloadUrl || file.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                        >
+                          {highlight(file.filename)}
+                        </a>
 
-                <div className="flex flex-col items-end gap-1">
-                  <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
-                    {formatSize(file.size)}
-                  </span>
-                  <button
-                    onClick={() => onDelete(agent, file)}
-                    className="text-[11px] bg-red-600 text-white px-2 py-1 rounded-lg hover:bg-red-700"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    );
-  }
+                        <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
+                          {formatSize(file.size)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      );
+    }
+
 
   /* =====================================================
      MODE: AGENTS (GROUPED VIEW – PURCHASE + RENTAL)

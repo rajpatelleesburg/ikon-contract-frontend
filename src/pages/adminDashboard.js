@@ -13,6 +13,9 @@ import { Auth } from "aws-amplify";
 
 /* ======================================================
    STAGE + ATTENTION (ADMIN VIEW)
+   Backend is authoritative for:
+   - transactionType: "PURCHASE" | "RENTAL"
+   - stage: string for PURCHASE, null for RENTAL
 ====================================================== */
 
 const STAGE_LABELS = {
@@ -40,28 +43,38 @@ const addrToLabel = (addr) => {
 };
 
 const leafName = (k = "") => String(k).split("/").pop();
-const normalizeFile = (f) => {
-  const raw = leafName(f.filename || f.key);
-  // ADMIN ONLY: clean rental filenames
-  const adminFriendly = raw
-    .replace(/^.*\sRental_w9\.pdf$/i, "Rental_w9.pdf")
-    .replace(/^.*\sRental\.pdf$/i, "Rental.pdf");
+
+/**
+ * ADMIN ONLY: display-friendly names for rental files.
+ * Keys stay unchanged — delete/download still uses key.
+ */
+const normalizeFile = (f, txn) => {
+  const rawLeaf = leafName(f.filename || f.key);
+
+  let display = rawLeaf;
+
+  if (txn === "RENTAL") {
+    display = display
+      .replace(/^.*\sRental_w9\.pdf$/i, "Rental_w9.pdf")
+      .replace(/^.*\sRental\.pdf$/i, "Rental.pdf")
+      .replace(/^.*rental_comm_disbursement\.json$/i, "Comm_Disbursement.json");
+  }
 
   return {
     key: f.key,
-    filename: adminFriendly,
+    filename: display,
     url: f.url,
     downloadUrl: f.url,
     size: f.size || 0,
+    documentType: f.documentType,
   };
 };
 
-
-
 const mergeFilesByKey = (existingFiles = [], incomingFiles = []) => {
-  const seen = new Set(existingFiles.map((x) => x.key));
-  const merged = [...existingFiles];
-  for (const f of incomingFiles) {
+  const seen = new Set((existingFiles || []).map((x) => x.key));
+  const merged = [...(existingFiles || [])];
+
+  for (const f of incomingFiles || []) {
     if (!f?.key) continue;
     if (seen.has(f.key)) continue;
     merged.push(f);
@@ -89,9 +102,10 @@ const formatAgentName = (agentRaw) => {
     return "Raj Patel"; // TEMP fallback
   }
 
-  return agentRaw.replace(/-/g, " ");
+  return String(agentRaw).replace(/-/g, " ");
 };
 
+const txnLabel = (txn) => (txn === "RENTAL" ? "Rental" : "Purchase");
 
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
@@ -148,90 +162,53 @@ export default function AdminDashboard({ user, signOut }) {
       const byAgent = {};
 
       for (const c of items) {
+        // Backend meta returns: agent, transactionType, address, stage (null for rentals), files[]
         const agent = formatAgentName(c.agent) || "Unknown Agent";
-        const txn = c.transactionType || "PURCHASE";
+        const txn = String(c.transactionType || "PURCHASE").toUpperCase();
         const addressLabel = addrToLabel(c.address);
-        const files = Array.isArray(c.files) ? c.files.map(normalizeFile) : [];
+
+        const filesIncomingRaw = Array.isArray(c.files) ? c.files : [];
+        const filesIncoming = filesIncomingRaw.map((f) => normalizeFile(f, txn));
 
         if (!byAgent[agent]) byAgent[agent] = [];
 
-        /* ============================
-          PURCHASE
-        ============================ */
-        if (txn === "PURCHASE") {
-          const key = addressLabel || "Purchase Contract";
+        const label = `${addressLabel || "Property"} - ${txnLabel(txn)}`;
 
-          let group = byAgent[agent].find(
-            (x) => x.type === "PURCHASE" && x.label === key
-          );
-
-          if (!group) {
-            const stage = c.stage || "UPLOADED";
-            group = {
-              type: "PURCHASE",
-              label: key,
-              stage,
-              stageLabel: STAGE_LABELS[stage] || stage,
-              attention: getAttentionReason(stage),
-              lastModified:
-                c.updatedAt || c.createdAt || new Date().toISOString(),
-              files: [],
-            };
-            byAgent[agent].push(group);
-          }
-
-          group.files = mergeFilesByKey(group.files, files);
-
-          const hasContractPdf = files.some(
-            (f) => String(f.filename || "").toLowerCase() === "contract.pdf"
-          );
-
-          if (hasContractPdf) {
-            const stage = c.stage || "UPLOADED";
-            group.stage = stage;
-            group.stageLabel = STAGE_LABELS[stage] || stage;
-            group.attention = getAttentionReason(stage);
-            group.lastModified =
-              c.updatedAt || c.createdAt || group.lastModified;
-          }
-
-          continue;
-        }
-
-        /* ============================
-          RENTAL (NO STAGE / NO EMD)
-        ============================ */
-        const rentalKey = `${addressLabel || "Rental"} Rental`
-          .replace(/\s+/g, " ")
-          .trim();
-
-        let rentalGroup = byAgent[agent].find(
-          (x) => x.type === "RENTAL" && x.label === rentalKey
+        let group = byAgent[agent].find(
+          (x) => x.label === label && x.type === txn
         );
 
-        if (!rentalGroup) {
-          rentalGroup = {
-            type: "RENTAL",
-            label: rentalKey,
-            stage: null,
-            stageLabel: null,
-            attention: null,
-            lastModified:
-              c.updatedAt || c.createdAt || new Date().toISOString(),
+        if (!group) {
+          const stage = txn === "PURCHASE" ? (c.stage || "UPLOADED") : null;
+
+          group = {
+            type: txn, // "PURCHASE" | "RENTAL"
+            label,
+            stage,
+            stageLabel: stage ? (STAGE_LABELS[stage] || stage) : null,
+            attention: stage ? getAttentionReason(stage) : null,
+            lastModified: c.updatedAt || c.createdAt || new Date().toISOString(),
             files: [],
           };
-          byAgent[agent].push(rentalGroup);
+
+          byAgent[agent].push(group);
         }
 
-        rentalGroup.files = mergeFilesByKey(rentalGroup.files, files);
+        group.files = mergeFilesByKey(group.files, filesIncoming);
 
-        // 🔒 HARD GUARANTEE: rentals never show stage / EMD
-        rentalGroup.stage = null;
-        rentalGroup.stageLabel = null;
-        rentalGroup.attention = null;
+        // Backend is authoritative, but we only show stage for PURCHASE
+        if (txn === "PURCHASE") {
+          const stage = c.stage || group.stage || "UPLOADED";
+          group.stage = stage;
+          group.stageLabel = STAGE_LABELS[stage] || stage;
+          group.attention = getAttentionReason(stage);
+        } else {
+          group.stage = null;
+          group.stageLabel = null;
+          group.attention = null;
+        }
 
-        rentalGroup.lastModified =
-          c.updatedAt || c.createdAt || rentalGroup.lastModified;
+        group.lastModified = c.updatedAt || c.createdAt || group.lastModified;
       }
 
       Object.keys(byAgent).forEach((agent) => {
@@ -256,7 +233,6 @@ export default function AdminDashboard({ user, signOut }) {
     }
   };
 
-
   const agentNames = useMemo(() => Object.keys(grouped).sort(), [grouped]);
 
   const totalContracts = useMemo(
@@ -264,32 +240,26 @@ export default function AdminDashboard({ user, signOut }) {
     [agentNames, grouped]
   );
 
+  /**
+   * Flat list used for summary + date windows.
+   * Stage/EMD only for PURCHASE (backend contract meta should set rentals stage=null).
+   */
   const flatFiles = useMemo(() => {
     const arr = [];
 
     Object.entries(grouped).forEach(([agent, items]) => {
       (items || []).forEach((item) => {
+        const isRental = item.type === "RENTAL";
         (item.files || []).forEach((f) => {
-          // 🔑 Source of truth: metadata first, fallback to grouping
-          const txn =
-            f.transactionType ||
-            item.transactionType ||
-            item.type;
-
-          const isRental = txn === "RENTAL";
-
           arr.push({
             agent,
             file: {
               ...f,
-
-              // 🔒 Rentals NEVER expose stage / EMD
               stage: isRental ? null : item.stage,
               stageLabel: isRental ? null : item.stageLabel,
               attention: isRental ? null : item.attention,
-
               lastModified: item.lastModified,
-              transactionType: txn,
+              transactionType: item.type,
             },
           });
         });
@@ -298,7 +268,6 @@ export default function AdminDashboard({ user, signOut }) {
 
     return arr;
   }, [grouped]);
-
 
   const windowInfo = useMemo(() => {
     const now = new Date();
@@ -327,7 +296,7 @@ export default function AdminDashboard({ user, signOut }) {
 
     const perAgent = {};
     chosen.forEach(({ agent, file }) => {
-      perAgent[agent] ||= [];
+      if (!perAgent[agent]) perAgent[agent] = [];
       perAgent[agent].push(file);
     });
 
@@ -345,8 +314,23 @@ export default function AdminDashboard({ user, signOut }) {
   }, [flatFiles]);
 
   const allContractsSorted = useMemo(() => {
-    return [...flatFiles].sort((a, b) => new Date(b.file.lastModified) - new Date(a.file.lastModified));
-  }, [flatFiles]);
+    const rows = [];
+
+    Object.entries(grouped).forEach(([agent, items]) => {
+      (items || []).forEach((item) => {
+        rows.push({
+          agent,
+          contract: item, // property-level object
+          lastModified: item.lastModified,
+        });
+      });
+    });
+
+    return rows.sort(
+      (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
+    );
+  }, [grouped]);
+
 
   const formatSize = (bytes) => {
     if (!bytes && bytes !== 0) return "";
