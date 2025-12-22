@@ -290,21 +290,39 @@ function DashboardPage({ user, signOut }) {
   const nameIncludes = (name, q) => (name || "").toLowerCase().includes(q);
 
   const visibleFiles = useMemo(() => {
-  // Keep your existing filtering rules
-  const base = files.filter((f) => {
-    const name = f.fileName?.toLowerCase() || "";
+  const q = search.trim().toLowerCase();
 
-    // Existing behavior preserved
+  // 1️⃣ Filter FIRST (flat)
+  const filtered = files.filter((f) => {
+    const name = (f.fileName || "").toLowerCase();
+
+    // Preserve existing exclusions
     if (name.includes("rental_w9") || name.includes("rentalw9")) return false;
 
-    return true;
+    if (!q) return true;
+
+    const addr = f.address || {};
+    const addressText = [
+      addr.streetNumber,
+      addr.streetName,
+      addr.city,
+      addr.state,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      name.includes(q) ||
+      addressText.includes(q)
+    );
   });
 
-  // Group purchase files by property
+  // 2️⃣ THEN group
   const purchaseGroups = {};
   const rentals = [];
 
-  base.forEach((f) => {
+  filtered.forEach((f) => {
     if (isRental(f)) {
       rentals.push(f);
     } else if (isPurchaseFile(f)) {
@@ -316,6 +334,7 @@ function DashboardPage({ user, signOut }) {
 
   return { rentals, purchaseGroups };
 }, [files, search]);
+
 
 
   const [autoAdjusted, setAutoAdjusted] = useState(false);
