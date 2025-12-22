@@ -11,9 +11,11 @@ import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
 import { Auth } from "aws-amplify";
 
-
 /* ======================================================
-   ✅ ADDITIVE: STAGE + ATTENTION HELPERS (ADMIN VIEW)
+   STAGE + ATTENTION (ADMIN VIEW)
+   Backend is authoritative for:
+   - transactionType: "PURCHASE" | "RENTAL"
+   - stage: string for PURCHASE, null for RENTAL
 ====================================================== */
 
 const STAGE_LABELS = {
@@ -21,7 +23,6 @@ const STAGE_LABELS = {
   EMD_COLLECTED: "EMD Collected",
   CONTINGENCIES: "Contingencies",
   CLOSED: "Closed",
-  COMMISSION: "Commission",
 };
 
 const ATTENTION_REASON = {
@@ -32,6 +33,79 @@ const ATTENTION_REASON = {
 
 const getAttentionReason = (stage) => ATTENTION_REASON[stage] || null;
 
+const addrToLabel = (addr) => {
+  if (!addr) return "";
+  return [addr.streetNumber, addr.streetName, addr.city, addr.state]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const leafName = (k = "") => String(k).split("/").pop();
+
+/**
+ * ADMIN ONLY: display-friendly names for rental files.
+ * Keys stay unchanged — delete/download still uses key.
+ */
+const normalizeFile = (f, txn) => {
+  const rawLeaf = leafName(f.filename || f.key);
+
+  let display = rawLeaf;
+
+  if (txn === "RENTAL") {
+    display = display
+      .replace(/^.*\sRental_w9\.pdf$/i, "Rental_w9.pdf")
+      .replace(/^.*\sRental\.pdf$/i, "Rental.pdf")
+      .replace(/^.*rental_comm_disbursement\.json$/i, "Comm_Disbursement.json");
+  }
+
+  return {
+    key: f.key,
+    filename: display,
+    url: f.url,
+    downloadUrl: f.url,
+    size: f.size || 0,
+    documentType: f.documentType,
+  };
+};
+
+const mergeFilesByKey = (existingFiles = [], incomingFiles = []) => {
+  const seen = new Set((existingFiles || []).map((x) => x.key));
+  const merged = [...(existingFiles || [])];
+
+  for (const f of incomingFiles || []) {
+    if (!f?.key) continue;
+    if (seen.has(f.key)) continue;
+    merged.push(f);
+    seen.add(f.key);
+  }
+  return merged;
+};
+
+const pickPrimaryFileForDelete = (item) => {
+  if (!item) return null;
+  if (item.key) return item; // already a file
+  const files = Array.isArray(item.files) ? item.files : [];
+  if (!files.length) return null;
+  const contract = files.find(
+    (f) => String(f.filename || "").toLowerCase() === "contract.pdf"
+  );
+  return contract || files[0];
+};
+
+const formatAgentName = (agentRaw) => {
+  if (!agentRaw) return "Unknown Agent";
+
+  // If it's a UUID (Cognito sub), show friendly fallback
+  if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(agentRaw)) {
+    return "Raj Patel"; // TEMP fallback
+  }
+
+  return String(agentRaw).replace(/-/g, " ");
+};
+
+const txnLabel = (txn) => (txn === "RENTAL" ? "Rental" : "Purchase");
 
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
@@ -62,9 +136,9 @@ export default function AdminDashboard({ user, signOut }) {
   useEffect(() => {
     if (!user) return;
     fetchContracts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // 🔹 FIXED + NORMALIZED FETCH
   const fetchContracts = async () => {
     try {
       setLoading(true);
@@ -74,10 +148,8 @@ export default function AdminDashboard({ user, signOut }) {
       const idToken = session.getIdToken().getJwtToken();
 
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts`,
-        {
-          headers: { Authorization: `Bearer ${idToken}` },
-        }
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/meta`,
+        { headers: { Authorization: `Bearer ${idToken}` } }
       );
 
       if (!res.ok) {
@@ -85,122 +157,134 @@ export default function AdminDashboard({ user, signOut }) {
       }
 
       const data = await res.json();
-      const files = Array.isArray(data.files) ? data.files : [];
+      const items = Array.isArray(data.items) ? data.items : [];
 
-      /**
-       * Normalize backend S3-style files
-       * key: "Agent-Name/filename.pdf"
-       */
-      const groupedData = {};
+      const byAgent = {};
 
-      files.forEach((f) => {
-        const key = f.key || "";
-        const parts = key.split("/");
-        const agentName =
-          parts.length > 1
-            ? parts[0].replace(/-/g, " ")
-            : "Unknown Agent";
+      for (const c of items) {
+        // Backend meta returns: agent, transactionType, address, stage (null for rentals), files[]
+        const agent = formatAgentName(c.agent) || "Unknown Agent";
+        const txn = String(c.transactionType || "PURCHASE").toUpperCase();
+        const addressLabel = addrToLabel(c.address);
 
-        const stage = f.stage || "UPLOADED";
+        const filesIncomingRaw = Array.isArray(c.files) ? c.files : [];
+        const filesIncoming = filesIncomingRaw.map((f) => normalizeFile(f, txn));
 
-        const file = {
-          key,
-          filename: parts.length > 1 ? parts[1] : "Contract",
-          lastModified: f.lastModified,
-          url: f.url,
-          downloadUrl: f.url,
+        if (!byAgent[agent]) byAgent[agent] = [];
 
-          // ✅ new admin-visible metadata
-          stage,
-          stageLabel: STAGE_LABELS[stage],
-          attention: getAttentionReason(stage),
+        const label = `${addressLabel || "Property"} - ${txnLabel(txn)}`;
 
-          // ✅ ADD THIS
-          emdHolder:
-            f.stageData?.holder === "OTHER"
-              ? f.stageData?.otherHolder
-              : f.stageData?.holder || null,
+        let group = byAgent[agent].find(
+          (x) => x.label === label && x.type === txn
+        );
 
-          // ✅ future-ready (Sprint 3)
-          closingDate: f.stageData?.closed?.closingDate || null,
-        };
+        if (!group) {
+          const stage = txn === "PURCHASE" ? (c.stage || "UPLOADED") : null;
 
-        if (!groupedData[agentName]) groupedData[agentName] = [];
-        groupedData[agentName].push(file);
-      });
+          group = {
+            type: txn, // "PURCHASE" | "RENTAL"
+            label,
+            stage,
+            stageLabel: stage ? (STAGE_LABELS[stage] || stage) : null,
+            attention: stage ? getAttentionReason(stage) : null,
+            lastModified: c.updatedAt || c.createdAt || new Date().toISOString(),
+            files: [],
+          };
 
-      Object.keys(groupedData).forEach((agent) => {
-        groupedData[agent].sort(
-          (a, b) =>
-            new Date(b.lastModified) - new Date(a.lastModified)
+          byAgent[agent].push(group);
+        }
+
+        group.files = mergeFilesByKey(group.files, filesIncoming);
+
+        // Backend is authoritative, but we only show stage for PURCHASE
+        if (txn === "PURCHASE") {
+          const stage = c.stage || group.stage || "UPLOADED";
+          group.stage = stage;
+          group.stageLabel = STAGE_LABELS[stage] || stage;
+          group.attention = getAttentionReason(stage);
+        } else {
+          group.stage = null;
+          group.stageLabel = null;
+          group.attention = null;
+        }
+
+        group.lastModified = c.updatedAt || c.createdAt || group.lastModified;
+      }
+
+      Object.keys(byAgent).forEach((agent) => {
+        byAgent[agent].sort(
+          (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
         );
       });
 
-      setGrouped(groupedData);
+      setGrouped(byAgent);
 
       const expandState = {};
-      Object.keys(groupedData).forEach((a) => (expandState[a] = true));
+      Object.keys(byAgent).forEach((a) => {
+        expandState[a] = true;
+      });
       setExpanded(expandState);
-    } catch (err) {
-      console.error("Error fetching admin contracts:", err);
+    } catch (e) {
+      console.error("Error fetching admin contracts:", e);
       setGrouped({});
-      setError(
-        "Unable to load contracts. Please refresh, and if the problem continues contact support."
-      );
+      setError("Unable to load contracts. Please refresh.");
     } finally {
       setLoading(false);
     }
   };
 
-  const agentNames = useMemo(
-    () => Object.keys(grouped).sort(),
-    [grouped]
-  );
+  const agentNames = useMemo(() => Object.keys(grouped).sort(), [grouped]);
 
   const totalContracts = useMemo(
-    () =>
-      agentNames.reduce(
-        (sum, a) => sum + (grouped[a]?.length || 0),
-        0
-      ),
+    () => agentNames.reduce((sum, a) => sum + (grouped[a]?.length || 0), 0),
     [agentNames, grouped]
   );
 
+  /**
+   * Flat list used for summary + date windows.
+   * Stage/EMD only for PURCHASE (backend contract meta should set rentals stage=null).
+   */
   const flatFiles = useMemo(() => {
     const arr = [];
-    agentNames.forEach((agent) => {
-      (grouped[agent] || []).forEach((file) =>
-        arr.push({ agent, file })
-      );
+
+    Object.entries(grouped).forEach(([agent, items]) => {
+      (items || []).forEach((item) => {
+        const isRental = item.type === "RENTAL";
+        (item.files || []).forEach((f) => {
+          arr.push({
+            agent,
+            file: {
+              ...f,
+              stage: isRental ? null : item.stage,
+              stageLabel: isRental ? null : item.stageLabel,
+              attention: isRental ? null : item.attention,
+              lastModified: item.lastModified,
+              transactionType: item.type,
+            },
+          });
+        });
+      });
     });
+
     return arr;
-  }, [agentNames, grouped]);
-
-  // Everything below this point is UNCHANGED from your original file
-  // (filters, summary, bulk delete, UI, modals, drag download)
-
+  }, [grouped]);
 
   const windowInfo = useMemo(() => {
     const now = new Date();
-    const files = flatFiles;
 
-    const inMonth = files.filter(({ file }) => {
+    const inMonth = flatFiles.filter(({ file }) => {
       const d = new Date(file.lastModified);
-      return (
-        d.getMonth() === now.getMonth() &&
-        d.getFullYear() === now.getFullYear()
-      );
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
 
     const byDays = (days) => {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - days);
-      return files.filter(({ file }) => new Date(file.lastModified) >= cutoff);
+      return flatFiles.filter(({ file }) => new Date(file.lastModified) >= cutoff);
     };
 
     let chosen = inMonth;
     let label = "This month";
-
     if (!chosen.length) {
       chosen = byDays(60);
       label = "Last 60 days";
@@ -221,26 +305,32 @@ export default function AdminDashboard({ user, signOut }) {
       counts[agent] = (counts[agent] || 0) + 1;
     });
 
-    const sortedAgents = Object.entries(counts)
+    const topAgents = Object.entries(counts)
       .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
       .map(([agent, count]) => ({ agent, count }));
 
-    const topAgents = sortedAgents.slice(0, 5);
-
-    return {
-      label,
-      total: chosen.length,
-      perAgent,
-      topAgents,
-    };
+    return { label, total: chosen.length, perAgent, topAgents };
   }, [flatFiles]);
 
   const allContractsSorted = useMemo(() => {
-    return [...flatFiles].sort(
-      (a, b) =>
-        new Date(b.file.lastModified) - new Date(a.file.lastModified)
+    const rows = [];
+
+    Object.entries(grouped).forEach(([agent, items]) => {
+      (items || []).forEach((item) => {
+        rows.push({
+          agent,
+          contract: item, // property-level object
+          lastModified: item.lastModified,
+        });
+      });
+    });
+
+    return rows.sort(
+      (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
     );
-  }, [flatFiles]);
+  }, [grouped]);
+
 
   const formatSize = (bytes) => {
     if (!bytes && bytes !== 0) return "";
@@ -249,7 +339,6 @@ export default function AdminDashboard({ user, signOut }) {
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
-  // 🔹 Dynamic bulk cleanup options based on oldest contract age
   const bulkOptions = useMemo(() => {
     if (!flatFiles.length) {
       return [
@@ -266,8 +355,7 @@ export default function AdminDashboard({ user, signOut }) {
       if (!isNaN(d) && d < oldest) oldest = d;
     });
 
-    const diffMs = now - oldest;
-    const diffYears = diffMs / (1000 * 60 * 60 * 24 * 365.25);
+    const diffYears = (now - oldest) / (1000 * 60 * 60 * 24 * 365.25);
 
     if (diffYears >= 5) {
       return [
@@ -290,8 +378,6 @@ export default function AdminDashboard({ user, signOut }) {
         { value: 0.5, label: "Older than 6 months" },
       ];
     }
-
-    // No contracts older than ~2 years → focus on this year, quarter, month
     return [
       { value: 1, label: "Older than 1 year (This year)" },
       { value: 0.25, label: "Older than 3 months (This quarter)" },
@@ -302,25 +388,18 @@ export default function AdminDashboard({ user, signOut }) {
   const applyFilters = () => {
     let filtered = JSON.parse(JSON.stringify(grouped));
 
-    if (selectedAgent) {
-      filtered = {
-        [selectedAgent]: filtered[selectedAgent] || [],
-      };
-    }
+    if (selectedAgent) filtered = { [selectedAgent]: filtered[selectedAgent] || [] };
 
     if (search.trim()) {
       const q = search.toLowerCase();
       const newFiltered = {};
       Object.keys(filtered).forEach((agent) => {
-        const matching = filtered[agent].filter((f) => {
-          return (
-            agent.toLowerCase().includes(q) ||
-            (f.filename || "").toLowerCase().includes(q) ||
-            (f.key || "").toLowerCase().includes(q) ||
-            JSON.stringify(f).toLowerCase().includes(q)
-          );
+        const matching = (filtered[agent] || []).filter((item) => {
+          const labelText = (item.label || "").toLowerCase();
+          const fileText = (item.files || []).map((x) => x.filename || "").join(" ").toLowerCase();
+          return agent.toLowerCase().includes(q) || labelText.includes(q) || fileText.includes(q);
         });
-        if (matching.length > 0) newFiltered[agent] = matching;
+        if (matching.length) newFiltered[agent] = matching;
       });
       filtered = newFiltered;
     }
@@ -328,16 +407,15 @@ export default function AdminDashboard({ user, signOut }) {
     if (dateRange.start || dateRange.end) {
       const start = dateRange.start ? new Date(dateRange.start) : null;
       const end = dateRange.end ? new Date(dateRange.end) : null;
-
       const newFiltered = {};
       Object.keys(filtered).forEach((agent) => {
-        const matching = filtered[agent].filter((f) => {
-          const d = new Date(f.lastModified);
+        const matching = (filtered[agent] || []).filter((item) => {
+          const d = new Date(item.lastModified);
           if (start && d < start) return false;
           if (end && d > end) return false;
           return true;
         });
-        if (matching.length > 0) newFiltered[agent] = matching;
+        if (matching.length) newFiltered[agent] = matching;
       });
       filtered = newFiltered;
     }
@@ -345,76 +423,42 @@ export default function AdminDashboard({ user, signOut }) {
     return filtered;
   };
 
-  const filteredGrouped = useMemo(applyFilters, [
-    grouped,
-    selectedAgent,
-    search,
-    dateRange,
-  ]);
-
-  const hasFilterInput = useMemo(
-    () =>
-      !!(
-        (search && search.trim()) ||
-        selectedAgent ||
-        dateRange.start ||
-        dateRange.end
-      ),
-    [search, selectedAgent, dateRange]
-  );
+  const filteredGrouped = useMemo(applyFilters, [grouped, selectedAgent, search, dateRange]);
 
   const filteredHasResults = useMemo(
-    () =>
-      Object.values(filteredGrouped).some(
-        (files) => Array.isArray(files) && files.length > 0
-      ),
+    () => Object.values(filteredGrouped).some((files) => Array.isArray(files) && files.length > 0),
     [filteredGrouped]
   );
 
-  // Automatically switch to filter-results mode when filters are applied
   useEffect(() => {
+    const hasFilterInput = !!((search && search.trim()) || selectedAgent || dateRange.start || dateRange.end);
+
     if (hasFilterInput) {
       if (filteredHasResults) {
-        // Filters override summary; always show filter-driven results under Tile 3
         if (resultsSource !== "filters" || dashboardMode !== "agents") {
           setResultsSource("filters");
           setDashboardMode("agents");
           setFocusedAgent(null);
         }
       } else {
-        // Filters are present but no matching data
-        if (resultsSource === "filters" && dashboardMode !== "normal") {
-          setDashboardMode("normal");
-        }
-        if (resultsSource === "filters") {
-          setResultsSource(null);
-        }
+        if (resultsSource === "filters" && dashboardMode !== "normal") setDashboardMode("normal");
+        if (resultsSource === "filters") setResultsSource(null);
       }
     } else {
-      // No filter input: if we were in filter mode, reset back to a clean dashboard
       if (resultsSource === "filters") {
-        if (dashboardMode !== "normal") {
-          setDashboardMode("normal");
-        }
+        if (dashboardMode !== "normal") setDashboardMode("normal");
         setResultsSource(null);
       }
     }
-  }, [hasFilterInput, filteredHasResults, resultsSource, dashboardMode]);
+  }, [search, selectedAgent, dateRange, filteredHasResults, resultsSource, dashboardMode]);
 
-  const expandAll = () => {
-    const all = {};
-    Object.keys(grouped).forEach((name) => (all[name] = true));
-    setExpanded(all);
-  };
-
-  const collapseAll = () => {
-    const all = {};
-    Object.keys(grouped).forEach((name) => (all[name] = false));
-    setExpanded(all);
-  };
-
-  const openDeleteModal = (agentName, file) => {
-    setDeleteTarget({ agentName, file });
+  const openDeleteModal = (agentName, fileOrGroup) => {
+    const primary = pickPrimaryFileForDelete(fileOrGroup);
+    if (!primary?.key) {
+      toast.error("Unable to delete: missing file key");
+      return;
+    }
+    setDeleteTarget({ agentName, file: primary });
     setShowDeleteModal(true);
   };
 
@@ -427,27 +471,15 @@ export default function AdminDashboard({ user, signOut }) {
     if (!deleteTarget) return;
 
     try {
-      // ✅ ALWAYS get a fresh token
       const session = await Auth.currentSession();
       const idToken = session.getIdToken().getJwtToken();
 
-      const key = deleteTarget.file.key;
+      const encodedKey = deleteTarget.file.key.split("/").map(encodeURIComponent).join("/");
 
-      // ✅ Encode path segments individually (keeps "/" working)
-      const encodedKey = key
-        .split("/")
-        .map(encodeURIComponent)
-        .join("/");
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${encodedKey}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-          },
-        }
-      );
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${encodedKey}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -464,7 +496,6 @@ export default function AdminDashboard({ user, signOut }) {
       closeDeleteModal();
     }
   };
-
 
   useEffect(() => {
     if (bulkConfirmText === "DELETE" && showBulkModal) {
@@ -505,17 +536,12 @@ export default function AdminDashboard({ user, signOut }) {
       const session = await Auth.currentSession();
       const idToken = session.getIdToken().getJwtToken();
 
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-delete?years=${bulkYears}`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${idToken}` },
-        }
-      );
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-delete?years=${bulkYears}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${idToken}` },
+      });
 
-      if (!res.ok) {
-        throw new Error(`Bulk delete failed: ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`Bulk delete failed: ${res.status}`);
 
       await res.json();
       await fetchContracts();
@@ -529,16 +555,7 @@ export default function AdminDashboard({ user, signOut }) {
     }
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-600">
-        Redirecting…
-      </div>
-    );
-  }
-
   const handleBackToDashboard = () => {
-    // Reset everything back to a clean dashboard (Option D: full reset)
     setDashboardMode("normal");
     setFocusedAgent(null);
     setResultsSource(null);
@@ -549,18 +566,11 @@ export default function AdminDashboard({ user, signOut }) {
     setBulkTileOpen(false);
   };
 
-  const hasSummaryResults =
-    resultsSource === "summary" && dashboardMode !== "normal";
-
-  const hasFilterResults =
-    resultsSource === "filters" && filteredHasResults;
-
+  const hasSummaryResults = resultsSource === "summary" && dashboardMode !== "normal";
+  const hasFilterResults = resultsSource === "filters" && filteredHasResults;
   const showAnyResults = hasSummaryResults || hasFilterResults;
   const isFilterMode = hasFilterResults;
-
-  // show Back when summary/filter drilling or bulk tile is open
-  const showBackLink =
-    hasSummaryResults || hasFilterResults || bulkTileOpen;
+  const showBackLink = hasSummaryResults || hasFilterResults || bulkTileOpen;
 
   const resultsSection = showAnyResults ? (
     <div className="space-y-3 animate-fade-in">
@@ -575,10 +585,7 @@ export default function AdminDashboard({ user, signOut }) {
         onDragStart={(e, file) => {
           const url = file?.downloadUrl || file?.url;
           if (!url) return;
-          e.dataTransfer.setData(
-            "DownloadURL",
-            `application/octet-stream:${url}`
-          );
+          e.dataTransfer.setData("DownloadURL", `application/octet-stream:${url}`);
         }}
         windowInfo={windowInfo}
         allContractsSorted={allContractsSorted}
@@ -600,7 +607,6 @@ export default function AdminDashboard({ user, signOut }) {
           </div>
         )}
 
-        {/* TILE 2: SUMMARY */}
         <SummaryTile
           totalAgents={agentNames.length}
           totalContracts={totalContracts}
@@ -641,10 +647,16 @@ export default function AdminDashboard({ user, signOut }) {
           }}
         />
 
-        {/* Summary results immediately under Tile 2 */}
+        {showBackLink && (
+          <div className="pt-1 pb-2 animate-fade-in">
+            <button onClick={handleBackToDashboard} className="text-blue-600 hover:underline text-sm">
+              ← Back to Dashboard
+            </button>
+          </div>
+        )}
+
         {hasSummaryResults && resultsSection}
 
-        {/* TILE 3: FILTERS (COLLAPSIBLE) */}
         <FiltersTile
           filtersOpen={filtersOpen}
           setFiltersOpen={setFiltersOpen}
@@ -660,22 +672,8 @@ export default function AdminDashboard({ user, signOut }) {
           onBack={handleBackToDashboard}
         />
 
-        {/* Filter results under Tile 3 */}
         {hasFilterResults && resultsSection}
 
-        {/* BACK BUTTON (dynamic, appears below Tile 3) */}
-        {showBackLink && (
-          <div className="pt-1 pb-2 animate-fade-in">
-            <button
-              onClick={handleBackToDashboard}
-              className="text-blue-600 hover:underline text-sm"
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
-        )}
-
-        {/* TILE 4: BULK CLEANUP (COLLAPSIBLE) */}
         <BulkDeleteTile
           bulkTileOpen={bulkTileOpen}
           setBulkTileOpen={setBulkTileOpen}
@@ -686,16 +684,10 @@ export default function AdminDashboard({ user, signOut }) {
         />
       </div>
 
-      {/* Individual Delete Modal */}
       {showDeleteModal && deleteTarget && (
-        <DeleteModal
-          target={deleteTarget}
-          onClose={closeDeleteModal}
-          onConfirm={confirmDeleteFile}
-        />
+        <DeleteModal target={deleteTarget} onClose={closeDeleteModal} onConfirm={confirmDeleteFile} />
       )}
 
-      {/* Bulk Delete Modal */}
       {showBulkModal && (
         <BulkDeleteModal
           years={bulkYears}

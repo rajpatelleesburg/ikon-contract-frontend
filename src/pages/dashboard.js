@@ -196,6 +196,23 @@ const presignAndPut = async ({
   return presignData.key; // s3Key
 };
 
+const daysAgo = (n) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split("T")[0];
+};
+
+const todayISO = () =>
+  new Date().toISOString().split("T")[0];
+
+const daysFromTodayISO = (offset) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toISOString().split("T")[0];
+};
+
+
+
 /* =========================
    COMPONENT
 ========================= */
@@ -290,21 +307,39 @@ function DashboardPage({ user, signOut }) {
   const nameIncludes = (name, q) => (name || "").toLowerCase().includes(q);
 
   const visibleFiles = useMemo(() => {
-  // Keep your existing filtering rules
-  const base = files.filter((f) => {
-    const name = f.fileName?.toLowerCase() || "";
+  const q = search.trim().toLowerCase();
 
-    // Existing behavior preserved
+  // 1️⃣ Filter FIRST (flat)
+  const filtered = files.filter((f) => {
+    const name = (f.fileName || "").toLowerCase();
+
+    // Preserve existing exclusions
     if (name.includes("rental_w9") || name.includes("rentalw9")) return false;
 
-    return true;
+    if (!q) return true;
+
+    const addr = f.address || {};
+    const addressText = [
+      addr.streetNumber,
+      addr.streetName,
+      addr.city,
+      addr.state,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return (
+      name.includes(q) ||
+      addressText.includes(q)
+    );
   });
 
-  // Group purchase files by property
+  // 2️⃣ THEN group
   const purchaseGroups = {};
   const rentals = [];
 
-  base.forEach((f) => {
+  filtered.forEach((f) => {
     if (isRental(f)) {
       rentals.push(f);
     } else if (isPurchaseFile(f)) {
@@ -316,6 +351,7 @@ function DashboardPage({ user, signOut }) {
 
   return { rentals, purchaseGroups };
 }, [files, search]);
+
 
 
   const [autoAdjusted, setAutoAdjusted] = useState(false);
@@ -702,53 +738,125 @@ function DashboardPage({ user, signOut }) {
               })()}
 
               {nextStage === "CONTINGENCIES" && (
-                <div className="space-y-2">
-                  {CONTINGENCY_TYPES.map((c) => (
-                    <label key={c.value} className="flex gap-2 text-sm items-center">
-                      <input
-                        type="checkbox"
-                        checked={(stageForm.types || []).includes(c.value)}
-                        onChange={(e) =>
-                          setStageForm((prev) => {
-                            const set = new Set(prev.types || []);
-                            e.target.checked ? set.add(c.value) : set.delete(c.value);
-
-                            // If "OTHER" gets unchecked, clear the text
-                            const next = { ...prev, types: Array.from(set) };
-                            if (!set.has("OTHER")) delete next.otherText;
-                            return next;
-                          })
-                        }
-                      />
-                      {c.label}
+                <div className="space-y-3">
+                  {/* EXPECTED CLOSING DATE (OPTIONAL – PART OF CONTINGENCIES) */}
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">
+                      Expected Closing Date
                     </label>
-                  ))}
-
-                  {(stageForm.types || []).includes("OTHER") && (
                     <input
-                      type="text"
-                      maxLength={100}
-                      placeholder="Specify other contingency (max 100 chars)"
+                      type="date"
                       className="w-full border px-3 py-2 rounded text-sm"
-                      value={stageForm.otherText || ""}
+                      min={daysFromTodayISO(-45)}
+                      max={daysFromTodayISO(45)}
+                      value={stageForm.closingDate || ""}
                       onChange={(e) =>
-                        setStageForm((p) => ({ ...p, otherText: e.target.value }))
+                        setStageForm((p) => ({
+                          ...p,
+                          closingDate: e.target.value,
+                        }))
                       }
                     />
-                  )}
+                  </div>
+
+                  {CONTINGENCY_TYPES.map((c) => {
+                    const contingencies = stageForm.contingencies || [];
+                    const existing = contingencies.find(
+                      (x) => x.type === c.value
+                    );
+
+                    const isChecked = !!existing;
+
+                    return (
+                      <div
+                        key={c.value}
+                        className="border rounded p-3 space-y-2 bg-slate-50"
+                      >
+                        <label className="flex items-center gap-2 text-sm font-medium">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) =>
+                              setStageForm((prev) => {
+                                const list = prev.contingencies || [];
+
+                                if (e.target.checked) {
+                                  return {
+                                    ...prev,
+                                    contingencies: [
+                                      ...list,
+                                      {
+                                        type: c.value,
+                                        expiresAt: null, // optional
+                                        notes: "",
+                                        createdAt: new Date().toISOString(),
+                                      },
+                                    ],
+                                  };
+                                }
+
+                                return {
+                                  ...prev,
+                                  contingencies: list.filter(
+                                    (x) => x.type !== c.value
+                                  ),
+                                };
+                              })
+                            }
+                          />
+                          {c.label}
+                        </label>
+
+                        {isChecked && (
+                          <div className="pl-6 space-y-2">
+                            {/* Optional expiration date */}
+                            <input
+                              type="date"
+                              className="border px-3 py-1 rounded text-sm w-full"
+                              min={daysFromTodayISO(-45)}   // ✅ 45 days back
+                              max={daysFromTodayISO(45)}    // ✅ 45 days forward
+                              value={existing.expiresAt || ""}
+                              onChange={(e) =>
+                                setStageForm((prev) => ({
+                                  ...prev,
+                                  contingencies: prev.contingencies.map((x) =>
+                                    x.type === c.value
+                                      ? { ...x, expiresAt: e.target.value }
+                                      : x
+                                  ),
+                                }))
+                              }
+                            />
+
+                            {/* Optional notes for OTHER */}
+                            {c.value === "OTHER" && (
+                              <textarea
+                                rows={2}
+                                placeholder="Optional notes"
+                                className="border px-3 py-2 rounded text-sm w-full"
+                                value={existing.notes || ""}
+                                onChange={(e) =>
+                                  setStageForm((prev) => ({
+                                    ...prev,
+                                    contingencies: prev.contingencies.map((x) =>
+                                      x.type === c.value
+                                        ? { ...x, notes: e.target.value }
+                                        : x
+                                    ),
+                                  }))
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
-
               {nextStage === "CLOSED" && (
                 <div className="space-y-2">
-                  <input
-                    type="date"
-                    className="w-full border px-3 py-2 rounded"
-                    onChange={(e) =>
-                      setStageForm((p) => ({ ...p, closingDate: e.target.value }))
-                    }
-                  />
                   <input
                     type="text"
                     placeholder="Title Company Name"
