@@ -739,6 +739,26 @@ function DashboardPage({ user, signOut }) {
 
               {nextStage === "CONTINGENCIES" && (
                 <div className="space-y-3">
+                  {/* EXPECTED CLOSING DATE (OPTIONAL – PART OF CONTINGENCIES) */}
+                  <div className="space-y-1">
+                    <label className="block text-sm font-medium">
+                      Expected Closing Date
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full border px-3 py-2 rounded text-sm"
+                      min={daysFromTodayISO(-45)}
+                      max={daysFromTodayISO(45)}
+                      value={stageForm.closingDate || ""}
+                      onChange={(e) =>
+                        setStageForm((p) => ({
+                          ...p,
+                          closingDate: e.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+
                   {CONTINGENCY_TYPES.map((c) => {
                     const contingencies = stageForm.contingencies || [];
                     const existing = contingencies.find(
@@ -837,13 +857,6 @@ function DashboardPage({ user, signOut }) {
 
               {nextStage === "CLOSED" && (
                 <div className="space-y-2">
-                  <input
-                    type="date"
-                    className="w-full border px-3 py-2 rounded"
-                    onChange={(e) =>
-                      setStageForm((p) => ({ ...p, closingDate: e.target.value }))
-                    }
-                  />
                   <input
                     type="text"
                     placeholder="Title Company Name"
