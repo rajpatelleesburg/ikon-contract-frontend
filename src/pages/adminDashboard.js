@@ -437,7 +437,7 @@ const closingsSoon = useMemo(() => {
         const matching = (filtered[agent] || []).filter((item) => {
           const labelText = (item.label || "").toLowerCase();
           const fileText = (item.files || []).map((x) => x.filename || "").join(" ").toLowerCase();
-          return agent.toLowerCase().includes(q) || labelText.includes(q) || fileText.includes(q);
+          return labelText.includes(q) || fileText.includes(q);
         });
         if (matching.length) newFiltered[agent] = matching;
       });
@@ -612,11 +612,14 @@ const closingsSoon = useMemo(() => {
   const isFilterMode = hasFilterResults;
   const showBackLink = hasSummaryResults || hasFilterResults || bulkTileOpen;
 
+  const dataForAgents =
+  isFilterMode ? filteredGrouped : grouped;
+
   const resultsSection = showAnyResults ? (
     <div className="space-y-3 animate-fade-in">
       <AgentSection
         mode={dashboardMode}
-        grouped={grouped}
+        grouped={dataForAgents}
         filteredGrouped={filteredGrouped}
         expanded={expanded}
         setExpanded={setExpanded}
@@ -625,7 +628,10 @@ const closingsSoon = useMemo(() => {
         onDragStart={(e, file) => {
           const url = file?.downloadUrl || file?.url;
           if (!url) return;
-          e.dataTransfer.setData("DownloadURL", `application/octet-stream:${url}`);
+          e.dataTransfer.setData(
+            "DownloadURL",
+            `application/octet-stream:${url}`
+          );
         }}
         windowInfo={windowInfo}
         allContractsSorted={allContractsSorted}
@@ -635,6 +641,7 @@ const closingsSoon = useMemo(() => {
       />
     </div>
   ) : null;
+
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center p-6">
