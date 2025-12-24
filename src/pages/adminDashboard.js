@@ -107,6 +107,14 @@ const formatAgentName = (agentRaw) => {
 
 const txnLabel = (txn) => (txn === "RENTAL" ? "Rental" : "Purchase");
 
+const CLOSING_SOON_DAYS = 7; // 🔁 change to 14 anytime
+
+const getClosingDate = (item) => {
+  const d = item?.stageData?.closingDate;
+  return d ? new Date(d) : null;
+};
+
+
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
   const [expanded, setExpanded] = useState({});
@@ -239,6 +247,38 @@ export default function AdminDashboard({ user, signOut }) {
     () => agentNames.reduce((sum, a) => sum + (grouped[a]?.length || 0), 0),
     [agentNames, grouped]
   );
+
+  // =========================
+// CLOSINGS SOON (ADMIN TILE)
+// =========================
+const closingsSoon = useMemo(() => {
+  const now = new Date();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() + CLOSING_SOON_DAYS);
+
+  const results = [];
+
+  Object.entries(grouped).forEach(([agent, items]) => {
+    (items || []).forEach((item) => {
+      if (item.type !== "PURCHASE") return;
+      if (item.stage === "CLOSED") return;
+
+      const closingDate = getClosingDate(item);
+      if (!closingDate) return;
+
+      if (closingDate >= now && closingDate <= cutoff) {
+        results.push({
+          agent,
+          label: item.label,
+          closingDate,
+          stage: item.stage,
+        });
+      }
+    });
+  });
+
+    return results.sort((a, b) => a.closingDate - b.closingDate);
+  }, [grouped]);
 
   /**
    * Flat list used for summary + date windows.
@@ -397,7 +437,7 @@ export default function AdminDashboard({ user, signOut }) {
         const matching = (filtered[agent] || []).filter((item) => {
           const labelText = (item.label || "").toLowerCase();
           const fileText = (item.files || []).map((x) => x.filename || "").join(" ").toLowerCase();
-          return agent.toLowerCase().includes(q) || labelText.includes(q) || fileText.includes(q);
+          return labelText.includes(q) || fileText.includes(q);
         });
         if (matching.length) newFiltered[agent] = matching;
       });
@@ -572,11 +612,14 @@ export default function AdminDashboard({ user, signOut }) {
   const isFilterMode = hasFilterResults;
   const showBackLink = hasSummaryResults || hasFilterResults || bulkTileOpen;
 
+  const dataForAgents =
+  isFilterMode ? filteredGrouped : grouped;
+
   const resultsSection = showAnyResults ? (
     <div className="space-y-3 animate-fade-in">
       <AgentSection
         mode={dashboardMode}
-        grouped={grouped}
+        grouped={dataForAgents}
         filteredGrouped={filteredGrouped}
         expanded={expanded}
         setExpanded={setExpanded}
@@ -585,7 +628,10 @@ export default function AdminDashboard({ user, signOut }) {
         onDragStart={(e, file) => {
           const url = file?.downloadUrl || file?.url;
           if (!url) return;
-          e.dataTransfer.setData("DownloadURL", `application/octet-stream:${url}`);
+          e.dataTransfer.setData(
+            "DownloadURL",
+            `application/octet-stream:${url}`
+          );
         }}
         windowInfo={windowInfo}
         allContractsSorted={allContractsSorted}
@@ -595,6 +641,7 @@ export default function AdminDashboard({ user, signOut }) {
       />
     </div>
   ) : null;
+
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center p-6">
@@ -613,6 +660,7 @@ export default function AdminDashboard({ user, signOut }) {
           windowLabel={windowInfo.label}
           windowCount={windowInfo.total}
           topAgents={windowInfo.topAgents}
+          closingSoonCount={closingsSoon.length}
           onAgentsClick={() => {
             setSearch("");
             setSelectedAgent("");
