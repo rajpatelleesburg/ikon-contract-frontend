@@ -574,9 +574,12 @@ function DashboardPage({ user, signOut }) {
   return (
     <div key={key} className="bg-slate-50 border rounded p-3 space-y-2">
       {/* Folder header */}
-      <div className="flex justify-between items-center">
-        <div className="font-semibold text-slate-800">
-          {getPurchaseLabelFromAddress(primary.address)}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <div className="font-semibold text-slate-800 leading-tight">
+          <div>{primary.address.streetNumber} {primary.address.streetName}</div>
+          <div className="text-sm text-slate-600">
+            {primary.address.city}, {primary.address.state}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -587,7 +590,7 @@ function DashboardPage({ user, signOut }) {
           {primary.stage !== "CLOSED" && (
             <button
               onClick={() => openStageModal(primary)}
-              className="px-3 py-2 text-sm rounded bg-slate-800 text-white"
+              className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm rounded-lg bg-slate-800 text-white"
             >
               Update Stage
             </button>
@@ -660,7 +663,7 @@ function DashboardPage({ user, signOut }) {
         {/* STAGE MODAL */}
         {stageModalOpen && selected && !isRental(selected) && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
-            <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4">
+            <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-bold">
                 Update Stage — {STAGE_LABELS[selected.stage]}
               </h3>

@@ -644,7 +644,7 @@ const closingsSoon = useMemo(() => {
 
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col items-center p-6">
+    <div className="min-h-screen bg-slate-100 flex flex-col items-center p-3 sm:p-6">
       <div className="w-full max-w-4xl bg-white p-6 sm:p-8 rounded-xl shadow-xl space-y-6">
         <HeaderTile signOut={signOut} />
 

@@ -23,7 +23,7 @@ export default function SummaryTile({
         
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <KpiCard
           icon={<UserIcon className="h-6 w-6 text-blue-600" />}
           title="Agents"

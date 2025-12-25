@@ -153,7 +153,7 @@ export default function CreateProfilePage({ user, signOut }) {
           {saving ? "Saving…" : "Save & Continue"}
         </button>
 
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <button
             onClick={() => router.replace("/dashboard")}
             className="w-1/2 border rounded-lg py-2"

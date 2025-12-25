@@ -6,7 +6,7 @@ import FileUpload from "../components/FileUpload";
 export default function UploadPage({ user, signOut }) {
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
-      <div className="bg-white shadow-lg p-10 rounded-xl w-full max-w-md space-y-6 text-center">
+      <div className="bg-white shadow-lg p-6 sm:p-10 rounded-xl w-full max-w-md space-y-6 text-center">
         <h1 className="text-xl font-bold text-slate-800">Upload Contract</h1>
 
         <FileUpload />
