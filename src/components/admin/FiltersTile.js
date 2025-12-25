@@ -69,7 +69,7 @@ export default function FiltersTile({
           </div>
 
           {/* Agent + Date Filters */}
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4">
             {/* Agent dropdown */}
             <select
               value={selectedAgent}
@@ -94,7 +94,7 @@ export default function FiltersTile({
             </select>
 
             {/* Date range */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-2 w-full sm:w-auto">
               <input
                 type="date"
                 className="
@@ -142,20 +142,6 @@ export default function FiltersTile({
               />
             </div>
           </div>
-
-          {/* Back to Dashboard (kept commented, unchanged) */}
-          {/*
-          {hasResults && (
-            <div className="pt-2">
-              <button
-                onClick={onBack}
-                className="text-blue-600 hover:underline text-sm"
-              >
-                ← Back to Dashboard
-              </button>
-            </div>
-          )}
-          */}
         </div>
       )}
     </div>

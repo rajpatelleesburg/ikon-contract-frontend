@@ -1,4 +1,3 @@
-// src/components/admin/AgentSection.js
 "use client";
 
 /* =========================
@@ -57,8 +56,8 @@ export default function AgentSection({
     const attention = item?.attention;
 
     return (
-      <div className="mt-1 space-y-1">
-        <div className="flex items-center gap-2">
+      <div className="mt-1">
+        <div className="flex flex-wrap gap-2">
           <span
             className={`text-[11px] px-2 py-1 rounded-md ${
               STAGE_COLORS[stage] || STAGE_COLORS.UPLOADED
@@ -78,83 +77,76 @@ export default function AgentSection({
   };
 
   /* =====================================================
-     MODE: ALL CONTRACTS (FLAT, ADMIN SUMMARY VIEW)
+     MODE: ALL CONTRACTS (ADMIN SUMMARY VIEW)
   ====================================================== */
-  /* =====================================================
-   MODE: ALL CONTRACTS (PROPERTY-LEVEL, ADMIN VIEW)
-===================================================== */
-    if (mode === "allContracts") {
-      return (
-        <section className="space-y-3 animate-fade-in">
-          <h2 className="text-sm font-semibold text-slate-800">
-            All Contracts (Newest first)
-          </h2>
+  if (mode === "allContracts") {
+    return (
+      <section className="space-y-3 animate-fade-in">
+        <h2 className="text-sm font-semibold text-slate-800">
+          All Contracts (Newest first)
+        </h2>
 
-          {allContractsSorted.length === 0 ? (
-            <p className="text-sm text-slate-500">No contracts found.</p>
-          ) : (
-            <ul className="space-y-3">
-              {allContractsSorted.map(({ agent, contract }) => (
-                <li
-                  key={`all-${agent}-${contract.label}`}
-                  className="bg-white p-4 rounded-lg border"
-                >
-                  {/* HEADER */}
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <div className="font-semibold text-slate-800">
-                        {highlight(contract.label)}
-                      </div>
+        {allContractsSorted.length === 0 ? (
+          <p className="text-sm text-slate-500">No contracts found.</p>
+        ) : (
+          <ul className="space-y-3">
+            {allContractsSorted.map(({ agent, contract }) => (
+              <li
+                key={`all-${agent}-${contract.label}`}
+                className="bg-white p-4 rounded-lg border"
+              >
+                {/* HEADER */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="font-semibold text-slate-800">
+                    {highlight(contract.label)}
+                  </div>
 
-                      <div className="text-[11px] text-slate-500">
-                        {new Date(contract.lastModified).toLocaleString()} —{" "}
-                        <span className="font-medium">{highlight(agent)}</span>
-                      </div>
-
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {renderStageMeta(contract)}
                     </div>
 
                     <button
                       onClick={() => onDelete(agent, contract)}
-                      className="text-[11px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
+                      className="w-full sm:w-auto text-[11px] px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                     >
                       Delete
                     </button>
                   </div>
+                </div>
 
-                  {/* FILES */}
-                  <div className="mt-2 pl-4 space-y-1">
-                    {contract.files.map((file) => (
-                      <div
-                        key={file.key}
-                        className="flex justify-between items-center text-sm"
+                {/* FILES */}
+                <div className="mt-2 pl-4 space-y-1">
+                  {contract.files.map((file) => (
+                    <div
+                      key={file.key}
+                      className="flex justify-between items-center text-sm"
+                    >
+                      <a
+                        href={file.downloadUrl || file.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-600 underline"
                       >
-                        <a
-                          href={file.downloadUrl || file.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-blue-600 underline"
-                        >
-                          {highlight(file.filename)}
-                        </a>
+                        {highlight(file.filename)}
+                      </a>
 
-                        <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
-                          {formatSize(file.size)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-      );
-    }
-
+                      <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
+                        {formatSize(file.size)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    );
+  }
 
   /* =====================================================
-     MODE: AGENTS (GROUPED VIEW – PURCHASE + RENTAL)
+     MODE: AGENTS (GROUPED VIEW)
   ====================================================== */
   if (mode === "agents") {
     const agents = Object.keys(grouped || {});
@@ -206,20 +198,23 @@ export default function AgentSection({
                           className="bg-white p-3 rounded-lg border"
                         >
                           {/* HEADER */}
-                          <div className="flex justify-between items-center">
-                            <div className="font-semibold text-slate-800">
-                              {highlight(item.label)}
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                            <div>
+                              <div className="font-semibold">
+                                {highlight(item.label)}
+                              </div>
+
+                              <div className="flex flex-wrap gap-2 mt-1">
+                                {renderStageMeta(item)}
+                              </div>
                             </div>
 
-                            <div className="flex items-center gap-2">
-                              {renderStageMeta(item)}
-                              <button
-                                onClick={() => onDelete(agent, item)}
-                                className="text-[11px] bg-red-600 text-white px-2 py-1 rounded hover:bg-red-700"
-                              >
-                                Delete
-                              </button>
-                            </div>
+                            <button
+                              onClick={() => onDelete(agent, item)}
+                              className="w-full sm:w-auto text-xs px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                            >
+                              Delete
+                            </button>
                           </div>
 
                           {/* FILES */}
@@ -308,17 +303,20 @@ export default function AgentSection({
                         key={rowKey}
                         className="bg-white p-4 rounded-lg border"
                       >
-                        <div className="flex justify-between items-center">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                           <div>
                             <div className="font-semibold">
                               {highlight(item.label)}
                             </div>
-                            {renderStageMeta(item)}
+
+                            <div className="flex flex-wrap gap-2 mt-1">
+                              {renderStageMeta(item)}
+                            </div>
                           </div>
 
                           <button
                             onClick={() => onDelete(agent, item)}
-                            className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                            className="w-full sm:w-auto text-xs px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
                           >
                             Delete
                           </button>
