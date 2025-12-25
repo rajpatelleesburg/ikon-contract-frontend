@@ -10,6 +10,7 @@ import Button from "../../../../components/ui/Button";
 export default function AltaUpload() {
   const router = useRouter();
   const { id } = router.query;
+  const safeId = typeof id === "string" && /^[a-zA-Z0-9_-]+$/.test(id) ? id : null;
 
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -17,6 +18,10 @@ export default function AltaUpload() {
 
   const upload = async () => {
     try {
+      if (!safeId) {
+        toast.error("Invalid contract id");
+        return;
+      }
       if (!file) return toast.error("Choose ALTA PDF");
       setUploading(true);
 
@@ -24,7 +29,7 @@ export default function AltaUpload() {
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
 
       // presign ALTA upload
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${id}/alta/presign`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${safeId}/alta/presign`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ contentType: file.type, fileSize: file.size }),
@@ -47,12 +52,12 @@ export default function AltaUpload() {
           setFile(null);
           setProgress(0);
           // notify backend
-          await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${id}/alta/complete`, {
+          await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${safeId}/alta/complete`, {
             method: "POST",
             headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
             body: JSON.stringify({ ok: true }),
           });
-          router.push(`/admin/contract/${id}`);
+          router.push(`/admin/contract/${safeId}`);
         } else {
           toast.error("Upload failed");
         }
