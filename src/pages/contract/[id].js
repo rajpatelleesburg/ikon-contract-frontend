@@ -14,6 +14,7 @@ const pretty = (k) => (STAGES.find(s => s.key === k)?.label || k);
 export default function ContractDetail() {
   const router = useRouter();
   const { id } = router.query;
+  const safeId = typeof id === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(id) ? id : null;
 
   const [c, setC] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -22,12 +23,12 @@ export default function ContractDetail() {
   const stageToneVal = stageTone(c?.stage || "UPLOADED");
 
   const refresh = async () => {
-    if (!id) return;
+    if (!safeId) return;
     setLoading(true);
     try {
       const user = await Auth.currentAuthenticatedUser();
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/contracts/${id}`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/contracts/${safeId}`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
       const data = await res.json();
@@ -41,10 +42,14 @@ export default function ContractDetail() {
     }
   };
 
-  useEffect(() => { refresh(); }, [id]);
+  useEffect(() => { refresh(); }, [safeId]);
 
   const addr = useMemo(() => {
     if (!c?.property) return "";
+    if (!safeId) {
+      toast.error("Invalid contract id");
+      return;
+    }
     return `${c.property.streetNumber || ""} ${c.property.streetName || ""}`.trim();
   }, [c]);
 
@@ -53,7 +58,7 @@ export default function ContractDetail() {
       setSaving(true);
       const user = await Auth.currentAuthenticatedUser();
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/contracts/${id}/stage`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/contracts/${safeId}/stage`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ stage }),
