@@ -16,23 +16,22 @@ export default function FiltersTile({
 }) {
   return (
     <div className="bg-slate-50 rounded-2xl border border-slate-200">
+      {/* Header */}
       <button
         type="button"
         className="w-full flex items-center justify-between px-4 py-3"
         onClick={() => setFiltersOpen((v) => !v)}
       >
-        <div className="flex flex-col items-start">
-          <span className="text-sm font-semibold text-slate-800">
-            Search &amp; Filters
-          </span>
-        </div>
+        <span className="text-sm font-semibold text-slate-800">
+          Search &amp; Filters
+        </span>
         <span className="text-slate-500">{filtersOpen ? "▾" : "▸"}</span>
       </button>
 
       {filtersOpen && (
-        <div className="px-4 pb-4 space-y-3 sm:space-y-4">
-          {/* Search (mobile-friendly + clear icon) */}
-          <div className="relative w-full flex justify-center sm:justify-start">
+        <div className="px-4 pb-4 space-y-4">
+          {/* Search */}
+          <div className="relative w-full">
             <input
               type="text"
               placeholder="Search agents, files, addresses…"
@@ -40,13 +39,10 @@ export default function FiltersTile({
               onChange={(e) => setSearch(e.target.value)}
               className="
                 w-full
-                max-w-xs
-                sm:max-w-sm
-                md:max-w-md
                 border
                 px-4
-                py-2
-                pr-9
+                py-3
+                pr-10
                 rounded-lg
                 text-sm
               "
@@ -72,12 +68,22 @@ export default function FiltersTile({
             )}
           </div>
 
-          {/* Agent Dropdown + Date Range */}
-          <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 items-start sm:items-center">
+          {/* Agent + Date Filters */}
+          <div className="flex flex-col sm:flex-row gap-4">
+            {/* Agent dropdown */}
             <select
               value={selectedAgent}
               onChange={(e) => setSelectedAgent(e.target.value)}
-              className="border px-3 py-2 rounded-lg text-sm w-full sm:w-auto"
+              className="
+                w-full
+                sm:w-auto
+                border
+                px-4
+                py-3
+                sm:py-2
+                rounded-lg
+                text-sm
+              "
             >
               <option value="">All Agents</option>
               {agentNames.map((name) => (
@@ -87,31 +93,60 @@ export default function FiltersTile({
               ))}
             </select>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            {/* Date range */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
               <input
                 type="date"
-                className="border px-2 py-1 rounded-lg text-sm w-full sm:w-auto"
+                className="
+                  w-full
+                  sm:w-auto
+                  border
+                  px-4
+                  py-3
+                  sm:py-2
+                  rounded-lg
+                  text-sm
+                "
                 value={dateRange.start}
                 onChange={(e) =>
-                  setDateRange((prev) => ({ ...prev, start: e.target.value }))
+                  setDateRange((prev) => ({
+                    ...prev,
+                    start: e.target.value,
+                  }))
                 }
               />
-              <span className="text-sm text-slate-500">to</span>
+
+              <span className="hidden sm:inline text-sm text-slate-500">
+                to
+              </span>
+
               <input
                 type="date"
-                className="border px-2 py-1 rounded-lg text-sm w-full sm:w-auto"
+                className="
+                  w-full
+                  sm:w-auto
+                  border
+                  px-4
+                  py-3
+                  sm:py-2
+                  rounded-lg
+                  text-sm
+                "
                 value={dateRange.end}
                 onChange={(e) =>
-                  setDateRange((prev) => ({ ...prev, end: e.target.value }))
+                  setDateRange((prev) => ({
+                    ...prev,
+                    end: e.target.value,
+                  }))
                 }
               />
             </div>
           </div>
 
-          {/* Back to Dashboard (kept commented as you had it) */}
+          {/* Back to Dashboard (kept commented, unchanged) */}
           {/*
           {hasResults && (
-            <div className="flex items-center gap-4 pt-2">
+            <div className="pt-2">
               <button
                 onClick={onBack}
                 className="text-blue-600 hover:underline text-sm"
