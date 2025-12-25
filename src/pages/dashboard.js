@@ -549,7 +549,17 @@ function DashboardPage({ user, signOut }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by address or filename"
-            className="flex-1 border px-3 py-1 rounded text-sm"
+            className="
+                        w-full
+                        max-w-xs
+                        sm:max-w-sm
+                        md:max-w-md
+                        border
+                        px-3
+                        py-1
+                        rounded
+                        text-sm
+                      "
           />
         </div>
 
