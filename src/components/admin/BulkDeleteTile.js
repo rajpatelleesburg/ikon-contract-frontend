@@ -37,17 +37,27 @@ export default function BulkDeleteTile({
       </button>
 
       {bulkTileOpen && (
-        <div className="px-4 pb-4 space-y-3 animate-slide-down">
-          <p className="text-xs text-slate-500">
+        <div className="px-4 pb-4 space-y-3 sm:space-y-4 animate-slide-down">
+          <p className="text-xs text-slate-500 leading-relaxed">
             Use this tool to move older contracts to Trash in bulk. Files
             remain in Trash for 15 days before permanent deletion.
           </p>
 
-          <div className="flex flex-wrap items-center gap-3">
+          {/* Controls */}
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 sm:items-center">
             <select
               value={bulkYears}
               onChange={(e) => setBulkYears(Number(e.target.value))}
-              className="border px-3 py-2 rounded-lg"
+              className="
+                border
+                px-3
+                py-2
+                rounded-lg
+                text-sm
+                w-full
+                sm:w-auto
+                max-w-xs
+              "
             >
               {effectiveOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -55,9 +65,21 @@ export default function BulkDeleteTile({
                 </option>
               ))}
             </select>
+
             <button
               onClick={openBulkModal}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              className="
+                w-full
+                sm:w-auto
+                px-4
+                py-2
+                bg-red-600
+                text-white
+                rounded-lg
+                text-sm
+                hover:bg-red-700
+                transition-colors
+              "
             >
               Bulk Delete
             </button>
