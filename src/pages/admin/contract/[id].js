@@ -11,9 +11,17 @@ import { STAGES, stageTone } from "../../../components/contractStages";
 
 const pretty = (k) => (STAGES.find(s => s.key === k)?.label || k);
 
+const sanitizeId = (rawId) => {
+  if (!rawId) return null;
+  const str = String(Array.isArray(rawId) ? rawId[0] : rawId);
+  // Allow only URL-safe identifier characters (no slashes, no dots, no spaces)
+  return /^[A-Za-z0-9_-]+$/.test(str) ? str : null;
+};
+
 export default function AdminContract() {
   const router = useRouter();
   const { id } = router.query;
+  const safeId = sanitizeId(id);
 
   const [c, setC] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -27,12 +35,12 @@ export default function AdminContract() {
   });
 
   const refresh = async () => {
-    if (!id) return;
+    if (!safeId) return;
     setLoading(true);
     try {
       const user = await Auth.currentAuthenticatedUser();
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${id}`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${safeId}`, {
         headers: { Authorization: `Bearer ${idToken}` },
       });
       const data = await res.json();
@@ -53,6 +61,10 @@ export default function AdminContract() {
   };
 
   useEffect(() => { refresh(); }, [id]);
+    if (!safeId) {
+      toast.error("Invalid contract ID");
+      return;
+    }
 
   const addr = useMemo(() => {
     if (!c?.property) return "";
@@ -64,13 +76,17 @@ export default function AdminContract() {
       setSaving(true);
       const user = await Auth.currentAuthenticatedUser();
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${id}/stage`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${safeId}/stage`, {
         method: "PATCH",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ stage }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed");
+    if (!safeId) {
+      toast.error("Invalid contract ID");
+      return;
+    }
       setC(data);
       toast.success("Stage updated");
     } catch (e) {
@@ -91,7 +107,7 @@ export default function AdminContract() {
       const user = await Auth.currentAuthenticatedUser();
       const idToken = user?.signInUserSession?.idToken?.jwtToken;
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${id}/commission`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/contracts/${safeId}/commission`, {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
