@@ -88,7 +88,11 @@ export default function FiltersTile({
               <option value="">All Agents</option>
               {agentNames.map((name) => (
                 <option key={name} value={name}>
-                  {name} ({grouped[name]?.length || 0})
+                  {name} (
+                    {Object.values(grouped)
+                      .find((g) => g.agentName === name)
+                      ?.items.length || 0}
+                  )
                 </option>
               ))}
             </select>

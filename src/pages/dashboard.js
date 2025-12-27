@@ -355,7 +355,7 @@ function DashboardPage({ user, signOut }) {
 
 
   const [autoAdjusted, setAutoAdjusted] = useState(false);
-
+  /*
   useEffect(() => {
     if (viewFilter !== "recent") return;
     if (loading) return;
@@ -366,6 +366,15 @@ function DashboardPage({ user, signOut }) {
       setViewFilter("month");
     }
   }, [viewFilter, files.length, loading, autoAdjusted]);
+  */
+
+  useEffect(() => {
+    if (viewFilter !== "recent") return;
+    if (loading) return;
+
+    // NEVER auto-switch away from Recent
+  }, [viewFilter, loading]);
+
 
   /* =========================
      STAGE MODAL
@@ -398,6 +407,34 @@ function DashboardPage({ user, signOut }) {
   ========================= */
 
   const saveStage = async () => {
+
+    if (nextStage === "CLOSED") {
+      if (!stageForm.titleCompany?.trim()) {
+        alert("Title Company Name is required.");
+        return;
+      }
+
+      if (!stageForm.commissionAmount) {
+        alert("Commission Amount is required.");
+        return;
+      }
+
+      if (!(stageForm.altaFile instanceof File)) {
+        alert("ALTA / Settlement Statement (PDF) is required.");
+        return;
+      }
+
+      if (stageForm.altaFile.type !== "application/pdf") {
+        alert("ALTA must be a PDF file.");
+        return;
+      }
+
+      if (stageForm.altaFile.size < 20_000) {
+        alert("ALTA file looks too small. Please upload the correct document.");
+        return;
+      }
+    }
+
     if (!selected || !nextStage) return;
 
     const prevStage = selected.stage;
