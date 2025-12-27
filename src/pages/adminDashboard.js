@@ -94,16 +94,6 @@ const pickPrimaryFileForDelete = (item) => {
   return contract || files[0];
 };
 
-const formatAgentName = (agentRaw) => {
-  if (!agentRaw) return "Unknown Agent";
-
-  // If it's a UUID (Cognito sub), show friendly fallback
-  if (/^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(agentRaw)) {
-    return "Raj Patel"; // TEMP fallback
-  }
-
-  return String(agentRaw).replace(/-/g, " ");
-};
 
 const txnLabel = (txn) => (txn === "RENTAL" ? "Rental" : "Purchase");
 
@@ -171,18 +161,26 @@ export default function AdminDashboard({ user, signOut }) {
 
       for (const c of items) {
         // Backend meta returns: agent, transactionType, address, stage (null for rentals), files[]
-        const agent = formatAgentName(c.agent) || "Unknown Agent";
+        //const agent = formatAgentName(c.agent) || "Unknown Agent";
+        const agentId = c.agentId || "unknown-agent";
+        const agentName = c.agentName || "Unknown Agent";
         const txn = String(c.transactionType || "PURCHASE").toUpperCase();
         const addressLabel = addrToLabel(c.address);
 
         const filesIncomingRaw = Array.isArray(c.files) ? c.files : [];
         const filesIncoming = filesIncomingRaw.map((f) => normalizeFile(f, txn));
 
-        if (!byAgent[agent]) byAgent[agent] = [];
+        if (!byAgent[agentId]) {
+          byAgent[agentId] = {
+            agentId,
+            agentName,
+            items: []
+          };
+        }
 
         const label = `${addressLabel || "Property"} - ${txnLabel(txn)}`;
 
-        let group = byAgent[agent].find(
+        let group = byAgent[agentId].items.find(
           (x) => x.label === label && x.type === txn
         );
 
@@ -199,7 +197,7 @@ export default function AdminDashboard({ user, signOut }) {
             files: [],
           };
 
-          byAgent[agent].push(group);
+          byAgent[agentId].items.push(group);
         }
 
         group.files = mergeFilesByKey(group.files, filesIncoming);
@@ -219,11 +217,12 @@ export default function AdminDashboard({ user, signOut }) {
         group.lastModified = c.updatedAt || c.createdAt || group.lastModified;
       }
 
-      Object.keys(byAgent).forEach((agent) => {
-        byAgent[agent].sort(
+      Object.values(byAgent).forEach((agentBlock) => {
+        agentBlock.items.sort(
           (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
         );
       });
+
 
       setGrouped(byAgent);
 
@@ -241,12 +240,23 @@ export default function AdminDashboard({ user, signOut }) {
     }
   };
 
-  const agentNames = useMemo(() => Object.keys(grouped).sort(), [grouped]);
+  const agentNames = useMemo(
+    () =>
+      Object.values(grouped)
+        .map((a) => a.agentName)
+        .sort(),
+    [grouped]
+  );
 
   const totalContracts = useMemo(
-    () => agentNames.reduce((sum, a) => sum + (grouped[a]?.length || 0), 0),
-    [agentNames, grouped]
+    () =>
+      Object.values(grouped).reduce(
+        (sum, a) => sum + (a.items?.length || 0),
+        0
+      ),
+    [grouped]
   );
+
 
   // =========================
 // CLOSINGS SOON (ADMIN TILE)
@@ -258,7 +268,7 @@ const closingsSoon = useMemo(() => {
 
   const results = [];
 
-  Object.entries(grouped).forEach(([agent, items]) => {
+  Object.values(grouped).forEach(({ agentId, agentName, items }) => {
     (items || []).forEach((item) => {
       if (item.type !== "PURCHASE") return;
       if (item.stage === "CLOSED") return;
@@ -268,7 +278,7 @@ const closingsSoon = useMemo(() => {
 
       if (closingDate >= now && closingDate <= cutoff) {
         results.push({
-          agent,
+          agent: agentName,
           label: item.label,
           closingDate,
           stage: item.stage,
@@ -287,17 +297,27 @@ const closingsSoon = useMemo(() => {
   const flatFiles = useMemo(() => {
     const arr = [];
 
-    Object.entries(grouped).forEach(([agent, items]) => {
+    Object.values(grouped).forEach(({ agentId, agentName, items }) => {
       (items || []).forEach((item) => {
         const isRental = item.type === "RENTAL";
+
         (item.files || []).forEach((f) => {
           arr.push({
-            agent,
+            // ✅ ALWAYS USE agentName FOR DISPLAY
+            agent: agentName,
+
+            // (optional but future-proof)
+            agentId,
+
             file: {
               ...f,
+
+              // ✅ PURCHASE-ONLY FIELDS
               stage: isRental ? null : item.stage,
               stageLabel: isRental ? null : item.stageLabel,
               attention: isRental ? null : item.attention,
+
+              // ✅ SORTING / FILTERING
               lastModified: item.lastModified,
               transactionType: item.type,
             },
@@ -308,6 +328,7 @@ const closingsSoon = useMemo(() => {
 
     return arr;
   }, [grouped]);
+
 
   const windowInfo = useMemo(() => {
     const now = new Date();
@@ -356,10 +377,10 @@ const closingsSoon = useMemo(() => {
   const allContractsSorted = useMemo(() => {
     const rows = [];
 
-    Object.entries(grouped).forEach(([agent, items]) => {
+    Object.values(grouped).forEach(({ agentId, agentName, items }) => {
       (items || []).forEach((item) => {
         rows.push({
-          agent,
+          agent: agentName,
           contract: item, // property-level object
           lastModified: item.lastModified,
         });
@@ -426,49 +447,66 @@ const closingsSoon = useMemo(() => {
   }, [flatFiles]);
 
   const applyFilters = () => {
-    let filtered = JSON.parse(JSON.stringify(grouped));
+    const q = search.trim().toLowerCase();
+    const start = dateRange.start ? new Date(dateRange.start) : null;
+    const end = dateRange.end ? new Date(dateRange.end) : null;
 
-    if (selectedAgent) filtered = { [selectedAgent]: filtered[selectedAgent] || [] };
+    const result = {};
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      const newFiltered = {};
-      Object.keys(filtered).forEach((agent) => {
-        const matching = (filtered[agent] || []).filter((item) => {
+    Object.values(grouped).forEach(({ agentId, agentName, items }) => {
+      let filteredItems = [...(items || [])];
+
+      // 1️⃣ Text search (address + filenames)
+      if (q) {
+        filteredItems = filteredItems.filter((item) => {
           const labelText = (item.label || "").toLowerCase();
-          const fileText = (item.files || []).map((x) => x.filename || "").join(" ").toLowerCase();
+          const fileText = (item.files || [])
+            .map((x) => x.filename || "")
+            .join(" ")
+            .toLowerCase();
+
           return labelText.includes(q) || fileText.includes(q);
         });
-        if (matching.length) newFiltered[agent] = matching;
-      });
-      filtered = newFiltered;
-    }
+      }
 
-    if (dateRange.start || dateRange.end) {
-      const start = dateRange.start ? new Date(dateRange.start) : null;
-      const end = dateRange.end ? new Date(dateRange.end) : null;
-      const newFiltered = {};
-      Object.keys(filtered).forEach((agent) => {
-        const matching = (filtered[agent] || []).filter((item) => {
+      // 2️⃣ Date range filter
+      if (start || end) {
+        filteredItems = filteredItems.filter((item) => {
           const d = new Date(item.lastModified);
           if (start && d < start) return false;
           if (end && d > end) return false;
           return true;
         });
-        if (matching.length) newFiltered[agent] = matching;
-      });
-      filtered = newFiltered;
-    }
+      }
 
-    return filtered;
+      // 3️⃣ Agent dropdown filter (by NAME, as UI expects)
+      if (selectedAgent && agentName !== selectedAgent) {
+        filteredItems = [];
+      }
+
+      if (filteredItems.length) {
+        result[agentId] = {
+          agentId,
+          agentName,
+          items: filteredItems,
+        };
+      }
+    });
+
+    return result;
   };
+
 
   const filteredGrouped = useMemo(applyFilters, [grouped, selectedAgent, search, dateRange]);
 
   const filteredHasResults = useMemo(
-    () => Object.values(filteredGrouped).some((files) => Array.isArray(files) && files.length > 0),
+    () =>
+      Object.values(filteredGrouped).some(
+        (block) => Array.isArray(block?.items) && block.items.length > 0
+      ),
     [filteredGrouped]
   );
+
 
   useEffect(() => {
     const hasFilterInput = !!((search && search.trim()) || selectedAgent || dateRange.start || dateRange.end);
@@ -612,8 +650,26 @@ const closingsSoon = useMemo(() => {
   const isFilterMode = hasFilterResults;
   const showBackLink = hasSummaryResults || hasFilterResults || bulkTileOpen;
 
+  const focusedGrouped = useMemo(() => {
+    if (!focusedAgent) return grouped;
+
+    // grouped shape: { [agentId]: { agentId, agentName, items } }
+    const entry = Object.entries(grouped).find(
+      ([, v]) => v.agentName === focusedAgent
+    );
+
+    if (!entry) return {};
+
+    const [agentId, agentBlock] = entry;
+    return { [agentId]: agentBlock };
+  }, [grouped, focusedAgent]);
+
   const dataForAgents =
-  isFilterMode ? filteredGrouped : grouped;
+  isFilterMode
+    ? filteredGrouped
+    : focusedAgent
+    ? focusedGrouped
+    : grouped;
 
   const resultsSection = showAnyResults ? (
     <div className="space-y-3 animate-fade-in">
@@ -690,7 +746,7 @@ const closingsSoon = useMemo(() => {
             setSelectedAgent("");
             setDateRange({ start: "", end: "" });
             setResultsSource("summary");
-            setDashboardMode("window");
+            setDashboardMode("agents");
             setFocusedAgent(agent);
           }}
         />
