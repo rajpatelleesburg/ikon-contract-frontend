@@ -423,7 +423,7 @@ export default function AuthWrapper({ children }) {
                     email,
                     given_name: form.given_name,
                     family_name: form.family_name,
-                    ...(phone ? { phone_number: phone } : {}),
+                    //...(phone ? { phone_number: phone } : {}),
                   },
                   autoSignIn: { enabled: true },
                 });
