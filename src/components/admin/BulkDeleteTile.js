@@ -28,32 +28,53 @@ export default function BulkDeleteTile({
     { value: 1, label: "Older than 1 year" },
   ];
 
-  // Safety confirmation
+  // 🔐 Two-step confirmation state
+  const [armed, setArmed] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [countdown, setCountdown] = useState(0);
 
+  // Start countdown ONLY after first click
   useEffect(() => {
-    if (bulkTileOpen) {
-      setConfirmText("");
-      setCountdown(10);
-      const t = setInterval(() => {
-        setCountdown((c) => (c > 0 ? c - 1 : 0));
-      }, 1000);
-      return () => clearInterval(t);
-    }
-  }, [bulkTileOpen]);
+    if (!armed) return;
 
-  const canProceed =
+    setConfirmText("");
+    setCountdown(8);
+
+    const t = setInterval(() => {
+      setCountdown((c) => (c > 0 ? c - 1 : 0));
+    }, 1000);
+
+    return () => clearInterval(t);
+  }, [armed]);
+
+  const canConfirm =
+    armed &&
     countdown === 0 &&
     confirmText.trim().toLowerCase() === "permanently delete" &&
     affectedCount > 0;
+
+  const handlePrimaryClick = () => {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+
+    if (canConfirm) {
+      openBulkModal();
+    }
+  };
 
   return (
     <div className="bg-slate-50 rounded-2xl border border-slate-200">
       <button
         type="button"
         className="w-full flex items-center justify-between px-4 py-3"
-        onClick={() => setBulkTileOpen((v) => !v)}
+        onClick={() => {
+          setBulkTileOpen((v) => !v);
+          setArmed(false);
+          setConfirmText("");
+          setCountdown(0);
+        }}
       >
         <span className="text-sm font-semibold text-slate-800">
           Bulk Cleanup
@@ -123,31 +144,40 @@ export default function BulkDeleteTile({
             )}
           </div>
 
-          {/* Confirmation */}
-          <div className="border rounded-lg p-3 bg-white space-y-2">
-            <p className="text-xs text-slate-600">
-              Wait <strong>{countdown}</strong> seconds and type{" "}
-              <strong>permanently delete</strong>.
-            </p>
-            <input
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              className="w-full border px-3 py-2 rounded-lg text-sm"
-              placeholder="permanently delete"
-            />
-          </div>
+          {/* Step-2 confirmation */}
+          {armed && (
+            <div className="border rounded-lg p-3 bg-white space-y-2">
+              <p className="text-xs text-slate-600">
+                Wait <strong>{countdown}</strong> seconds and type{" "}
+                <strong>permanently delete</strong>.
+              </p>
+              <input
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                className="w-full border px-3 py-2 rounded-lg text-sm"
+                placeholder="permanently delete"
+              />
+            </div>
+          )}
 
-          <button
-            disabled={!canProceed}
-            onClick={openBulkModal}
-            className={`w-full px-4 py-2 rounded-lg text-sm transition-colors ${
-              canProceed
-                ? "bg-red-600 text-white hover:bg-red-700"
-                : "bg-slate-200 text-slate-400 cursor-not-allowed"
-            }`}
-          >
-            Move contracts to Trash
-          </button>
+          {affectedCount > 0 && (
+            <button
+              disabled={armed && !canConfirm}
+              onClick={handlePrimaryClick}
+              className={`w-full px-4 py-2 rounded-lg text-sm transition-colors ${
+                !armed
+                  ? "bg-red-600 text-white hover:bg-red-700"
+                  : canConfirm
+                  ? "bg-red-600 text-white hover:bg-red-700"
+                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
+              }`}
+            >
+              {!armed
+                ? "Move Contracts to Trash"
+                : "Confirm Permanent Delete"}
+            </button>
+          )}
+
         </div>
       )}
     </div>
