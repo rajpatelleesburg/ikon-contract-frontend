@@ -111,7 +111,9 @@ export default function AdminDashboard({ user, signOut }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+ 
   const [selectedAgent, setSelectedAgent] = useState("");
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
 
@@ -130,6 +132,15 @@ export default function AdminDashboard({ user, signOut }) {
   const [dashboardMode, setDashboardMode] = useState("normal");
   const [focusedAgent, setFocusedAgent] = useState(null);
   const [resultsSource, setResultsSource] = useState(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearch(searchInput);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
 
   useEffect(() => {
     if (!user) return;
@@ -764,8 +775,8 @@ const closingsSoon = useMemo(() => {
         <FiltersTile
           filtersOpen={filtersOpen}
           setFiltersOpen={setFiltersOpen}
-          search={search}
-          setSearch={setSearch}
+          search={searchInput}
+          setSearch={setSearchInput}
           selectedAgent={selectedAgent}
           setSelectedAgent={setSelectedAgent}
           dateRange={dateRange}
