@@ -119,7 +119,12 @@ const getPurchaseGroupKey = (f) => {
 };
 
 const isPurchaseFile = (f) =>
-  !isRental(f) && !!f.address; // purchase files always have address
+  !isRental(f) &&
+  (
+    !!f.address ||
+    String(f.fileName || "").toLowerCase() === "contract.pdf"
+  );
+
 
 const isPurchaseChildFile = (f) =>
   isPurchaseFile(f) && !isPurchasePrimaryContract(f);
@@ -229,17 +234,24 @@ function DashboardPage({ user, signOut }) {
   const [viewFilter, setViewFilter] = useState("recent");
   const [search, setSearch] = useState("");
 
-  const FETCH_LIMIT = 10;
-  const DISPLAY_LIMIT = 3;
-  const limit = FETCH_LIMIT;
+  const DISPLAY_LIMIT = 5;
 
-  const [displayCount, setDisplayCount] = useState(3);
+  const [displayCountByFilter, setDisplayCountByFilter] = useState({});
+  const displayCount =
+    displayCountByFilter[viewFilter] ?? DISPLAY_LIMIT;
 
   useEffect(() => {
     Auth.currentAuthenticatedUser()
       .then((u) => setProfile(u.attributes))
       .catch(console.error);
   }, []);
+
+  useEffect(() => {
+    setDisplayCountByFilter((p) => ({
+      ...p,
+      [viewFilter]: p[viewFilter] ?? DISPLAY_LIMIT,
+    }));
+  }, [viewFilter, search]);
 
   const fullName =
     profile?.given_name && profile?.family_name
@@ -259,7 +271,6 @@ function DashboardPage({ user, signOut }) {
         const token = session.getAccessToken().getJwtToken();
 
         const params = new URLSearchParams({
-          limit: String(limit),
           view: viewFilter,
         });
 
@@ -289,14 +300,14 @@ function DashboardPage({ user, signOut }) {
         setLoadingMore(false);
       }
     },
-    [limit, viewFilter]
+    [viewFilter]
   );
 
   useEffect(() => {
     if (!user) return;
     setFiles([]);
     setNextCursor(null);
-    setDisplayCount(3);
+    setDisplayCountByFilter((p) => ({ ...p, [viewFilter]: DISPLAY_LIMIT }));
     fetchContracts({ append: false });
   }, [user, viewFilter, fetchContracts]);
 
@@ -307,72 +318,64 @@ function DashboardPage({ user, signOut }) {
   const nameIncludes = (name, q) => (name || "").toLowerCase().includes(q);
 
   const visibleFiles = useMemo(() => {
-  const q = search.trim().toLowerCase();
+    const q = search.trim().toLowerCase();
 
-  // 1️⃣ Filter FIRST (flat)
-  const filtered = files.filter((f) => {
-    const name = (f.fileName || "").toLowerCase();
+    // 1️⃣ Filter FIRST (flat list)
+    const filtered = files.filter((f) => {
+      const name = (f.fileName || "").toLowerCase();
 
-    // Preserve existing exclusions
-    if (name.includes("rental_w9") || name.includes("rentalw9")) return false;
+      // Preserve existing exclusions
+      if (name.includes("rental_w9") || name.includes("rentalw9")) return false;
 
-    if (!q) return true;
+      if (!q) return true;
 
-    const addr = f.address || {};
-    const addressText = [
-      addr.streetNumber,
-      addr.streetName,
-      addr.city,
-      addr.state,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
+      const addr = f.address || {};
+      const addressText = [
+        addr.streetNumber,
+        addr.streetName,
+        addr.city,
+        addr.state,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-    return (
-      name.includes(q) ||
-      addressText.includes(q)
-    );
-  });
+      return name.includes(q) || addressText.includes(q);
+    });
 
-  // 2️⃣ THEN group
-  const purchaseGroups = {};
-  const rentals = [];
+    // 2️⃣ THEN group
+    const purchaseGroups = {};
+    const rentals = [];
 
-  filtered.forEach((f) => {
-    if (isRental(f)) {
-      rentals.push(f);
-    } else if (isPurchaseFile(f)) {
-      const key = getPurchaseGroupKey(f);
-      purchaseGroups[key] = purchaseGroups[key] || [];
-      purchaseGroups[key].push(f);
-    }
-  });
+    filtered.forEach((f) => {
+      if (isRental(f)) {
+        rentals.push(f);
+      } else if (isPurchaseFile(f)) {
+        // IMPORTANT: stable fallback key so older contracts never collapse
+        const key = getPurchaseGroupKey(f) || f.contractId || f.s3Key;
+        purchaseGroups[key] = purchaseGroups[key] || [];
+        purchaseGroups[key].push(f);
+      }
+    });
 
-  return { rentals, purchaseGroups };
-}, [files, search]);
+    return { rentals, purchaseGroups };
+  }, [files, search]);
 
+  const purchaseKeys = Object.keys(visibleFiles.purchaseGroups || {});
+  const totalPurchases = purchaseKeys.length;
+  const totalRentals = visibleFiles.rentals.length;
+  const totalContracts = totalPurchases + totalRentals;
+
+  const showingPurchases = Math.min(displayCount, totalPurchases);
+  const showingRentals = Math.min(displayCount, totalRentals);
+  const showingTotal = showingPurchases + showingRentals;
 
 
   const [autoAdjusted, setAutoAdjusted] = useState(false);
-  /*
-  useEffect(() => {
-    if (viewFilter !== "recent") return;
-    if (loading) return;
-    if (autoAdjusted) return;
-
-    if (files.length < DISPLAY_LIMIT) {
-      setAutoAdjusted(true);
-      setViewFilter("month");
-    }
-  }, [viewFilter, files.length, loading, autoAdjusted]);
-  */
 
   useEffect(() => {
     if (viewFilter !== "recent") return;
     if (loading) return;
-
-    // NEVER auto-switch away from Recent
   }, [viewFilter, loading]);
 
 
@@ -600,9 +603,14 @@ function DashboardPage({ user, signOut }) {
           />
         </div>
 
+        <div className="text-xs text-slate-500">
+          Showing {showingTotal} of {totalContracts} contracts
+          ({totalPurchases} purchases, {totalRentals} rentals)
+        </div>
+
         {loading && (
           <div className="space-y-2">
-            {[...Array(limit)].map((_, i) => (
+            {[...Array(DISPLAY_LIMIT)].map((_, i) => (
               <div
                 key={i}
                 className="h-14 bg-slate-100 animate-pulse rounded border"
@@ -614,90 +622,113 @@ function DashboardPage({ user, signOut }) {
         {!loading && (
           <div className="space-y-2">
             {/* PURCHASE FOLDERS */}
-{Object.entries(visibleFiles.purchaseGroups).map(([key, group]) => {
-  const primary = group.find(isPurchasePrimaryContract);
-  if (!primary) return null;
+            {Object.entries(visibleFiles.purchaseGroups).slice(0, displayCount).map(([key, group]) => {
+              const primary = group.find(isPurchasePrimaryContract);
+              if (!primary) return null;
 
-  return (
-    <div key={key} className="bg-slate-50 border rounded p-3 space-y-2">
-      {/* Folder header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div className="font-semibold text-slate-800 leading-tight">
-          <div>{primary.address.streetNumber} {primary.address.streetName}</div>
-          <div className="text-sm text-slate-600">
-            {primary.address.city}, {primary.address.state}
-          </div>
-        </div>
+              return (
+                <div key={key} className="bg-slate-50 border rounded p-3 space-y-2">
+                  {/* Folder header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="font-semibold text-slate-800 leading-tight">
+                      <div>{primary.address.streetNumber} {primary.address.streetName}</div>
+                      <div className="text-sm text-slate-600">
+                        {primary.address.city}, {primary.address.state}
+                      </div>
+                    </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs px-2 py-1 rounded bg-slate-200">
-            {STAGE_LABELS[primary.stage]}
-          </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-1 rounded bg-slate-200">
+                        {STAGE_LABELS[primary.stage]}
+                      </span>
 
-          {primary.stage !== "CLOSED" && (
-            <button
-              onClick={() => openStageModal(primary)}
-              className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm rounded-lg bg-slate-800 text-white"
-            >
-              Update Stage
-            </button>
-          )}
-        </div>
-      </div>
+                      {primary.stage !== "CLOSED" && (
+                        <button
+                          onClick={() => openStageModal(primary)}
+                          className="w-full sm:w-auto px-4 py-3 sm:py-2 text-sm rounded-lg bg-slate-800 text-white"
+                        >
+                          Update Stage
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
-      {/* Files inside folder */}
-      <div className="pl-4 space-y-1">
-        {group.map((f) => (
-          <div key={f.contractId} className="text-sm">
-            <a
-              href={f.url}
-              target="_blank"
-              rel="noreferrer"
-              className="text-blue-600 underline"
-            >
-              {displayFileName(f.fileName)}
-            </a>
+                  {/* Files inside folder */}
+                  <div className="pl-4 space-y-1">
+                    {group.map((f) => (
+                      <div key={f.contractId} className="text-sm">
+                        <a
+                          href={f.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-blue-600 underline"
+                        >
+                          {displayFileName(f.fileName)}
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {totalPurchases > displayCount && (
+              <button
+                onClick={() =>
+                  setDisplayCountByFilter((p) => ({
+                    ...p,
+                    [viewFilter]:
+                      (p[viewFilter] ?? DISPLAY_LIMIT) + DISPLAY_LIMIT,
+                  }))
+                }
+                className="w-full border rounded py-2 text-sm"
+              >
+                Load More Purchases
+              </button>
+            )}
+
+
+
+        {/* RENTALS (unchanged behavior) */}
+        {visibleFiles.rentals.slice(0, displayCount).map((f) => (
+          <div
+            key={f.contractId}
+            className="flex justify-between items-center bg-slate-50 p-3 rounded border"
+          >
+            <div>
+              <a
+                href={f.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-600 underline"
+              >
+                {displayFileName(f.fileName)}
+              </a>
+              <div className="text-xs text-slate-500">
+                {f.lastModified
+                  ? new Date(f.lastModified).toLocaleDateString()
+                  : ""}
+              </div>
+            </div>
           </div>
         ))}
-      </div>
-    </div>
-  );
-})}
-
-{/* RENTALS (unchanged behavior) */}
-{visibleFiles.rentals.map((f) => (
-  <div
-    key={f.contractId}
-    className="flex justify-between items-center bg-slate-50 p-3 rounded border"
-  >
-    <div>
-      <a
-        href={f.url}
-        target="_blank"
-        rel="noreferrer"
-        className="text-blue-600 underline"
-      >
-        {displayFileName(f.fileName)}
-      </a>
-      <div className="text-xs text-slate-500">
-        {f.lastModified
-          ? new Date(f.lastModified).toLocaleDateString()
-          : ""}
-      </div>
-    </div>
-  </div>
-))}
+        {/* LOAD MORE RENTALS */}
+         {totalRentals > displayCount && (
+            <button
+              onClick={() =>
+                setDisplayCountByFilter((p) => ({
+                  ...p,
+                  [viewFilter]:
+                    (p[viewFilter] ?? DISPLAY_LIMIT) + DISPLAY_LIMIT,
+                }))
+              }
+              className="w-full border rounded py-2 text-sm"
+            >
+              Load More Rentals
+            </button>
+          )}
 
           </div>
-        )}
-
-        {!loading && visibleFiles.length > displayCount && (
-          <button
-            onClick={() => setDisplayCount((c) => c + DISPLAY_LIMIT)}
-            className="w-full border rounded py-2"
-          >
-            Load More
-          </button>
         )}
 
         <button
