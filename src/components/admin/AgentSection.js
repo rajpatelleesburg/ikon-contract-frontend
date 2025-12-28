@@ -1,4 +1,5 @@
 "use client";
+import { useState, useEffect } from "react";
 
 /* =========================
    STAGE BADGE COLORS
@@ -11,6 +12,9 @@ const STAGE_COLORS = {
   COMMISSION: "bg-purple-100 text-purple-700",
 };
 
+const isPdfPreviewable = (f) =>
+  String(f.filename || "").toLowerCase().endsWith(".pdf");
+
 export default function AgentSection({
   mode,
   grouped,
@@ -20,12 +24,38 @@ export default function AgentSection({
   formatSize,
   onDelete,
   onDragStart,
-  windowInfo,
   allContractsSorted,
-  focusedAgent,
-  setFocusedAgent,
   searchTerm = "",
 }) {
+  /* =========================
+     STATE
+  ========================= */
+  const [pdfPreview, setPdfPreview] = useState(null);
+  const [zoom, setZoom] = useState(1);
+
+  /* =========================
+     KEYBOARD HANDLERS
+  ========================= */
+  useEffect(() => {
+    if (!pdfPreview) return;
+
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setPdfPreview(null);
+        setZoom(1);
+      }
+      if (e.key === "+" || e.key === "=") {
+        setZoom((z) => Math.min(2, z + 0.25));
+      }
+      if (e.key === "-" || e.key === "_") {
+        setZoom((z) => Math.max(0.5, z - 0.25));
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pdfPreview]);
+
   /* =========================
      SEARCH HIGHLIGHT
   ========================= */
@@ -56,31 +86,31 @@ export default function AgentSection({
     const attention = item?.attention;
 
     return (
-      <div className="mt-1">
-        <div className="flex flex-wrap gap-2">
-          <span
-            className={`text-[11px] px-2 py-1 rounded-md ${
-              STAGE_COLORS[stage] || STAGE_COLORS.UPLOADED
-            }`}
-          >
-            {label}
+      <div className="mt-1 flex flex-wrap gap-2">
+        <span
+          className={`text-[11px] px-2 py-1 rounded-md ${
+            STAGE_COLORS[stage] || STAGE_COLORS.UPLOADED
+          }`}
+        >
+          {label}
+        </span>
+        {attention && (
+          <span className="text-[11px] text-red-600 font-semibold">
+            ⚠ {attention}
           </span>
-
-          {attention && (
-            <span className="text-[11px] text-red-600 font-semibold">
-              ⚠ {attention}
-            </span>
-          )}
-        </div>
+        )}
       </div>
     );
   };
 
-  /* =====================================================
-     MODE: ALL CONTRACTS (ADMIN SUMMARY VIEW)
-  ====================================================== */
+  /* =========================
+     MAIN CONTENT
+  ========================= */
+  let content = null;
+
+  /* -------- ALL CONTRACTS -------- */
   if (mode === "allContracts") {
-    return (
+    content = (
       <section className="space-y-3 animate-fade-in">
         <h2 className="text-sm font-semibold text-slate-800">
           All Contracts (Newest first)
@@ -95,45 +125,31 @@ export default function AgentSection({
                 key={`all-${agent}-${contract.label}`}
                 className="bg-white p-4 rounded-lg border"
               >
-                {/* HEADER */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                  <div className="font-semibold text-slate-800">
+                <div className="flex justify-between gap-2">
+                  <div className="font-semibold">
                     {highlight(contract.label)}
+                    {renderStageMeta(contract)}
                   </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                    <div className="flex flex-wrap gap-2">
-                      {renderStageMeta(contract)}
-                    </div>
-
-                    <button
-                      onClick={() => onDelete(agent, contract)}
-                      className="w-full sm:w-auto text-[11px] px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => onDelete(agent, contract)}
+                    className="text-xs px-3 py-2 bg-red-600 text-white rounded"
+                  >
+                    Delete
+                  </button>
                 </div>
 
-                {/* FILES */}
                 <div className="mt-2 pl-4 space-y-1">
-                  {contract.files.map((file) => (
-                    <div
-                      key={file.key}
-                      className="flex justify-between items-center text-sm"
-                    >
+                  {contract.files.map((f) => (
+                    <div key={f.key} className="text-sm">
                       <a
-                        href={file.downloadUrl || file.url}
+                        href={f.url}
                         target="_blank"
                         rel="noreferrer"
                         className="text-blue-600 underline"
                       >
-                        {highlight(file.filename)}
+                        {highlight(f.filename)}
                       </a>
-
-                      <span className="text-[11px] bg-slate-200 px-2 py-1 rounded-lg">
-                        {formatSize(file.size)}
-                      </span>
                     </div>
                   ))}
                 </div>
@@ -145,108 +161,131 @@ export default function AgentSection({
     );
   }
 
-  /* =====================================================
-     MODE: AGENTS (GROUPED VIEW)
-  ====================================================== */
-  /* =====================================================
-   MODE: AGENTS (GROUPED VIEW) — UPDATED MODEL
-====================================================== */
+  /* -------- AGENTS -------- */
   if (mode === "agents") {
     const agentBlocks = Object.values(grouped || {});
-
-    return (
+    content = (
       <section className="space-y-3 animate-fade-in">
         <h2 className="text-sm font-semibold text-slate-800">Agents</h2>
 
-        {agentBlocks.length === 0 ? (
-          <p className="text-sm text-slate-500">No agents found.</p>
+        {agentBlocks.map(({ agentId, agentName, items }) => {
+          const isOpen = expanded[agentId] ?? true;
+
+          return (
+            <div key={agentId} className="border rounded-lg p-4 bg-slate-50">
+              <div
+                className="flex justify-between cursor-pointer"
+                onClick={() =>
+                  setExpanded((p) => ({ ...p, [agentId]: !p[agentId] }))
+                }
+              >
+                <h3 className="font-semibold">
+                  {highlight(agentName)} ({items.length})
+                </h3>
+                <span>{isOpen ? "▾" : "▸"}</span>
+              </div>
+
+              {isOpen && (
+                <ul className="mt-3 space-y-3">
+                  {items.map((item) => (
+                    <li key={item.label} className="bg-white p-3 rounded border">
+                      <div className="flex justify-between">
+                        <div>
+                          <div className="font-semibold">
+                            {highlight(item.label)}
+                          </div>
+                          {renderStageMeta(item)}
+                        </div>
+
+                        <button
+                          onClick={() => onDelete(agentName, item)}
+                          className="text-xs px-3 py-2 bg-red-600 text-white rounded"
+                        >
+                          Delete
+                        </button>
+                      </div>
+
+                      <div className="mt-2 pl-4 space-y-1">
+                        {item.files.map((f) => (
+                          <div key={f.key} className="text-sm">
+                            {isPdfPreviewable(f) ? (
+                              <button
+                                onClick={() => setPdfPreview(f)}
+                                className="text-blue-600 underline"
+                              >
+                                {highlight(f.filename)}
+                              </button>
+                            ) : (
+                              <a
+                                href={f.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-blue-600 underline"
+                              >
+                                {highlight(f.filename)}
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </section>
+    );
+  }
+
+  /* -------- FILTERED -------- */
+  if (mode === "filtered") {
+    const blocks = Object.values(filteredGrouped || {});
+    content = (
+      <section className="space-y-3 animate-fade-in">
+        {blocks.length === 0 ? (
+          <p className="text-center text-slate-500 text-sm">
+            No matching results.
+          </p>
         ) : (
-          agentBlocks.map(({ agentId, agentName, items }) => {
+          blocks.map(({ agentId, agentName, items }) => {
             const isOpen = expanded[agentId] ?? true;
 
             return (
-              <div
-                key={`agent-${agentId}`}
-                className="border rounded-lg p-4 bg-slate-50 mb-2"
-              >
-                {/* HEADER */}
+              <div key={agentId} className="border rounded-lg p-4 bg-slate-50">
                 <div
-                  className="flex justify-between items-center cursor-pointer"
+                  className="flex justify-between cursor-pointer"
                   onClick={() =>
-                    setExpanded((prev) => ({
-                      ...prev,
-                      [agentId]: !prev[agentId],
-                    }))
+                    setExpanded((p) => ({ ...p, [agentId]: !p[agentId] }))
                   }
                 >
-                  <h3 className="text-sm font-semibold text-slate-800">
+                  <h3 className="font-semibold">
                     {highlight(agentName)} ({items.length})
                   </h3>
-                  <span className="text-blue-600">
-                    {isOpen ? "▾" : "▸"}
-                  </span>
+                  <span>{isOpen ? "▾" : "▸"}</span>
                 </div>
 
                 {isOpen && (
                   <ul className="mt-3 space-y-3">
-                    {items.map((item) => {
-                      const rowKey =
-                        item.type === "PURCHASE"
-                          ? `purchase-${agentId}-${item.label}`
-                          : `rental-${agentId}-${item.files[0]?.key}`;
-
-                      return (
-                        <li
-                          key={rowKey}
-                          className="bg-white p-3 rounded-lg border"
-                        >
-                          {/* HEADER */}
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            <div>
-                              <div className="font-semibold">
-                                {highlight(item.label)}
-                              </div>
-
-                              <div className="flex flex-wrap gap-2 mt-1">
-                                {renderStageMeta(item)}
-                              </div>
+                    {items.map((item) => (
+                      <li key={item.label} className="bg-white p-3 rounded border">
+                        <div className="flex justify-between">
+                          <div>
+                            <div className="font-semibold">
+                              {highlight(item.label)}
                             </div>
-
-                            <button
-                              onClick={() =>
-                                onDelete(agentName, item)
-                              }
-                              className="w-full sm:w-auto text-xs px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-                            >
-                              Delete
-                            </button>
+                            {renderStageMeta(item)}
                           </div>
-
-                          {/* FILES */}
-                          <div className="mt-2 pl-4 space-y-1">
-                            {item.files.map((f) => (
-                              <div
-                                key={f.key}
-                                draggable
-                                onDragStart={(e) =>
-                                  onDragStart?.(e, f)
-                                }
-                                className="text-sm"
-                              >
-                                <a
-                                  href={f.downloadUrl || f.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-blue-600 underline"
-                                >
-                                  {highlight(f.filename)}
-                                </a>
-                              </div>
-                            ))}
-                          </div>
-                        </li>
-                      );
-                    })}
+                          <button
+                            onClick={() => onDelete(agentName, item)}
+                            className="text-xs px-3 py-2 bg-red-600 text-white rounded"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </li>
+                    ))}
                   </ul>
                 )}
               </div>
@@ -257,105 +296,73 @@ export default function AgentSection({
     );
   }
 
+  /* =========================
+     RENDER
+  ========================= */
+  return (
+    <>
+      {content}
 
-  /* =====================================================
-     MODE: FILTERED (SEARCH RESULTS)
-  ====================================================== */
-  /* =====================================================
-   MODE: FILTERED (SEARCH RESULTS) — UPDATED MODEL
-====================================================== */
-const filteredBlocks = Object.values(filteredGrouped || {});
+      {pdfPreview && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl w-full max-w-5xl h-[85vh] p-4 flex flex-col">
+            <div className="flex justify-between mb-2">
+              <div className="font-semibold">{pdfPreview.filename}</div>
 
-return (
-  <section className="space-y-3 animate-fade-in">
-    {filteredBlocks.length === 0 ? (
-      <p className="text-center text-slate-500 text-sm">
-        No matching results.
-      </p>
-    ) : (
-      filteredBlocks.map(({ agentId, agentName, items }) => {
-       const isOpen = expanded[agentId] ?? true;
-
-        return (
-          <div
-            key={`filtered-${agentId}`}
-            className="border rounded-lg p-4 bg-slate-50"
-          >
-            <div
-              className="flex justify-between items-center cursor-pointer"
-              onClick={() =>
-                setExpanded((prev) => ({
-                  ...prev,
-                  [agentId]: !prev[agentId],
-                }))
-              }
-            >
-              <h2 className="text-lg font-bold">
-                {highlight(agentName)} ({items.length})
-              </h2>
-              <span className="text-blue-600">
-                {isOpen ? "▾" : "▸"}
-              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
+                  className="px-2 py-1 border rounded"
+                >
+                  −
+                </button>
+                <span className="text-sm">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  onClick={() => setZoom((z) => Math.min(2, z + 0.25))}
+                  className="px-2 py-1 border rounded"
+                >
+                  +
+                </button>
+                <a
+                  href={pdfPreview.url}
+                  download
+                  className="px-3 py-1 bg-blue-600 text-white rounded text-sm"
+                >
+                  Download
+                </a>
+                <button
+                  onClick={() => {
+                    setPdfPreview(null);
+                    setZoom(1);
+                  }}
+                  className="px-2"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            {isOpen && (
-              <ul className="mt-3 space-y-3">
-                {items.map((item) => {
-                  const rowKey =
-                    item.type === "PURCHASE"
-                      ? `filtered-purchase-${agentId}-${item.label}`
-                      : `filtered-rental-${agentId}-${item.files[0]?.key}`;
+            <div className="flex-1 overflow-auto border rounded">
+              <iframe
+                src={pdfPreview.url}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  transform: `scale(${zoom})`,
+                  transformOrigin: "top center",
+                }}
+              />
+            </div>
 
-                  return (
-                    <li
-                      key={rowKey}
-                      className="bg-white p-4 rounded-lg border"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                        <div>
-                          <div className="font-semibold">
-                            {highlight(item.label)}
-                          </div>
-
-                          <div className="flex flex-wrap gap-2 mt-1">
-                            {renderStageMeta(item)}
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() =>
-                            onDelete(agentName, item)
-                          }
-                          className="w-full sm:w-auto text-xs px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-                        >
-                          Delete
-                        </button>
-                      </div>
-
-                      <div className="mt-2 pl-4 space-y-1">
-                        {item.files.map((f) => (
-                          <div key={f.key} className="text-sm">
-                            <a
-                              href={f.downloadUrl || f.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-blue-600 underline"
-                            >
-                              {highlight(f.filename)}
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+            <div className="text-xs text-slate-500 mt-1 flex justify-between">
+              <span>Scroll to navigate pages</span>
+              <span>ESC to close</span>
+            </div>
           </div>
-        );
-      })
-    )}
-  </section>
-);
-
+        </div>
+      )}
+    </>
+  );
 }
