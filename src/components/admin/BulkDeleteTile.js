@@ -2,23 +2,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
 export default function BulkDeleteTile({
   bulkTileOpen,
   setBulkTileOpen,
-
   // Contract age selection (years)
   bulkYears,
   setBulkYears,
-
   // Retention (trash)
   retentionDays,
   setRetentionDays,
-
   // Count from parent
   affectedCount = 0,
-
   openBulkModal,
+   // NEW
+  runBulkDryRun,
+  dryRunResult,
+  dryRunLoading,
 }) {
   const ageOptions = [
     { value: 5, label: "Older than 5 years (Default)" },
@@ -32,14 +31,12 @@ export default function BulkDeleteTile({
   const [armed, setArmed] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [countdown, setCountdown] = useState(0);
-
+  const [previewLimit, setPreviewLimit] = useState(10);
   // Start countdown ONLY after first click
   useEffect(() => {
     if (!armed) return;
-
     setConfirmText("");
     setCountdown(8);
-
     const t = setInterval(() => {
       setCountdown((c) => (c > 0 ? c - 1 : 0));
     }, 1000);
@@ -47,13 +44,31 @@ export default function BulkDeleteTile({
     return () => clearInterval(t);
   }, [armed]);
 
+  useEffect(() => {
+    if (!bulkTileOpen) {
+      setPreviewLimit(10);
+    }
+  }, [bulkTileOpen]);
+
+  // Reset dry-run preview when criteria changes
+  useEffect(() => {
+    setArmed(false);
+    setConfirmText("");
+    setCountdown(0);
+  }, [bulkYears, retentionDays]);
+
   const canConfirm =
     armed &&
     countdown === 0 &&
     confirmText.trim().toLowerCase() === "permanently delete" &&
     affectedCount > 0;
 
-  const handlePrimaryClick = () => {
+  const handlePrimaryClick = async () => {
+    // First click → run dry-run
+    if (!dryRunResult) {
+      await runBulkDryRun();
+      return;
+    }
     if (!armed) {
       setArmed(true);
       return;
@@ -144,6 +159,44 @@ export default function BulkDeleteTile({
             )}
           </div>
 
+          {/* Dry-run preview */}
+          {dryRunResult && dryRunResult.items && (
+            <div className="border rounded-lg bg-white p-3 space-y-2">
+              <div className="text-xs font-semibold text-slate-700">
+                Preview – Contracts to be archived
+                <span className="ml-1 text-slate-500">
+                  (showing {Math.min(previewLimit, dryRunResult.items.length)} of{" "}
+                  {dryRunResult.items.length})
+                </span>
+              </div>
+
+              <ul className="divide-y text-xs">
+                {dryRunResult.items.slice(0, previewLimit).map((c, idx) => (
+                  <li key={idx} className="py-2">
+                    <div className="font-medium text-slate-800">
+                      {c.label}
+                    </div>
+                    <div className="text-slate-500">
+                      {c.agent} · {c.transactionType}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+
+              {previewLimit < dryRunResult.items.length && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPreviewLimit((p) => Math.min(p + 10, dryRunResult.items.length))
+                  }
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Show more
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Step-2 confirmation */}
           {armed && (
             <div className="border rounded-lg p-3 bg-white space-y-2">
@@ -161,22 +214,32 @@ export default function BulkDeleteTile({
           )}
 
           {affectedCount > 0 && (
-            <button
-              disabled={armed && !canConfirm}
-              onClick={handlePrimaryClick}
-              className={`w-full px-4 py-2 rounded-lg text-sm transition-colors ${
-                !armed
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : canConfirm
-                  ? "bg-red-600 text-white hover:bg-red-700"
-                  : "bg-slate-200 text-slate-400 cursor-not-allowed"
-              }`}
-            >
-              {!armed
-                ? "Move Contracts to Trash"
-                : "Confirm Permanent Delete"}
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={
+              dryRunLoading ||
+              (dryRunResult && armed && !canConfirm)
+            }
+            onClick={handlePrimaryClick}
+            className={`w-full px-4 py-2 rounded-lg text-sm transition-colors ${
+              dryRunLoading
+                ? "bg-slate-300 text-slate-500 cursor-wait"
+                : !dryRunResult
+                ? "bg-red-600 text-white hover:bg-red-700"
+                : canConfirm
+                ? "bg-red-600 text-white hover:bg-red-700"
+                : "bg-slate-200 text-slate-400 cursor-not-allowed"
+            }`}
+          >
+            {!dryRunResult
+              ? dryRunLoading
+                ? "Previewing affected contracts…"
+                : "Move Contracts to Trash"
+              : armed
+              ? "Confirm Permanent Delete"
+              : "Review Preview & Proceed"}
+          </button>
+        )}
 
         </div>
       )}

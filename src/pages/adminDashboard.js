@@ -167,6 +167,9 @@ export default function AdminDashboard({ user, signOut }) {
 
   const [bulkYears, setBulkYears] = useState(5); // default 5 years
   const [retentionDays, setRetentionDays] = useState(30);
+  const [dryRunResult, setDryRunResult] = useState(null);
+  const [dryRunLoading, setDryRunLoading] = useState(false);
+
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -303,6 +306,38 @@ export default function AdminDashboard({ user, signOut }) {
     [grouped]
   );
 
+  const runBulkDryRun = async () => {
+    try {
+      setDryRunLoading(true);
+
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
+      setDryRunResult(null);
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-archive` +
+          `?olderThanYears=${bulkYears}&retentionDays=${retentionDays}&dryRun=true`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${idToken}` },
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error(`Dry-run failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      setDryRunResult(data);
+    } catch (err) {
+      console.error("Dry-run error:", err);
+      toast.error("Unable to preview affected contracts.");
+    } finally {
+      setDryRunLoading(false);
+    }
+  };
+
+ 
+  
   const executeBulkDelete = async () => {
     if (bulkConfirmText !== "DELETE") return;
 
@@ -751,6 +786,7 @@ const closingsSoon = useMemo(() => {
     setDateRange({ start: "", end: "" });
     setFiltersOpen(false);
     setBulkTileOpen(false);
+    setDryRunResult(null);
   };
 
   const hasSummaryResults = resultsSource === "summary" && dashboardMode !== "normal";
@@ -908,6 +944,9 @@ const closingsSoon = useMemo(() => {
           setRetentionDays={setRetentionDays}
           affectedCount={bulkDeleteCount}
           openBulkModal={openBulkModal}
+          runBulkDryRun={runBulkDryRun}
+          dryRunResult={dryRunResult}
+          dryRunLoading={dryRunLoading}
         />
       </div>
 
