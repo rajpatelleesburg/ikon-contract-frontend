@@ -745,11 +745,18 @@ const closingsSoon = useMemo(() => {
             setFocusedAgent(null);
           }}
           onWindowClick={() => {
+            const now = new Date();
+            const start = new Date(now.getFullYear(), now.getMonth(), 1);
+
             setSearch("");
             setSelectedAgent("");
-            setDateRange({ start: "", end: "" });
+            setDateRange({
+              start: start.toISOString().slice(0, 10),
+              end: now.toISOString().slice(0, 10),
+            });
+
             setResultsSource("summary");
-            setDashboardMode("window");
+            setDashboardMode("agents"); // 🔑 IMPORTANT
             setFocusedAgent(null);
           }}
           onTopAgentClick={(agent) => {
