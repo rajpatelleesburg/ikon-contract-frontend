@@ -18,18 +18,29 @@ export default function RecentActivityTile({ activity }) {
         {activity.map((a, idx) => (
           <li key={idx} className="py-2 flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-sm font-medium text-slate-800 truncate">
-                {a.filename}
-              </div>
-              <div className="text-xs text-slate-500">
+                <div className="flex items-center gap-2">
+                <div className="text-sm font-medium text-slate-800 truncate">
+                    {a.filename}
+                </div>
+
+                {a.attention && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200">
+                    Attention
+                    </span>
+                )}
+                </div>
+
+                <div className="text-xs text-slate-500">
                 {a.agent} · {a.transactionType}
-              </div>
+                {a.attention && ` · ${a.attention}`}
+                </div>
             </div>
 
             <div className="text-xs text-slate-400 whitespace-nowrap">
-              {a.relativeTime}
+                {a.relativeTime}
             </div>
-          </li>
+        </li>
+
         ))}
       </ul>
     </div>
