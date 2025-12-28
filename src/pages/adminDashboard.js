@@ -10,6 +10,7 @@ import AgentSection from "../components/admin/AgentSection";
 import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
 import RecentActivityTile from "../components/admin/RecentActivityTile";
+import UploadVelocityTile from "../components/admin/UploadVelocityTile";
 import { Auth } from "aws-amplify";
 
 /* ======================================================
@@ -382,21 +383,27 @@ const closingsSoon = useMemo(() => {
       return `${Math.floor(diffSec / 86400)}d ago`;
     };
 
-    return flatFiles
-      .slice()
-      .sort(
-        (a, b) =>
-          new Date(b.file.lastModified) - new Date(a.file.lastModified)
-      )
-      .slice(0, 20)
-      .map(({ agent, file }) => ({
-        agent,
-        filename: file.filename,
-        transactionType: file.transactionType === "RENTAL" ? "Rental" : "Purchase",
-        lastModified: file.lastModified,
-        relativeTime: toRelativeTime(new Date(file.lastModified)),
-      }));
+    const rows = flatFiles.map(({ agent, file }) => ({
+      agent,
+      filename: file.filename,
+      transactionType: file.transactionType === "RENTAL" ? "Rental" : "Purchase",
+      attention: file.attention, // 🔴 KEY
+      lastModified: file.lastModified,
+      relativeTime: toRelativeTime(new Date(file.lastModified)),
+    }));
+
+    return rows
+      .sort((a, b) => {
+        // 🔴 Pin attention-required first
+        if (a.attention && !b.attention) return -1;
+        if (!a.attention && b.attention) return 1;
+
+        // Then newest first
+        return new Date(b.lastModified) - new Date(a.lastModified);
+      })
+      .slice(0, 20);
   }, [flatFiles]);
+
 
   const windowInfo = useMemo(() => {
     const { start, end, label } = getPresetDateRange(windowPreset);
@@ -429,6 +436,23 @@ const closingsSoon = useMemo(() => {
       end,
     };
   }, [flatFiles, windowPreset]);
+
+  const uploadVelocity = useMemo(() => {
+    const { start, end } = getPresetDateRange(windowPreset);
+    const counts = {};
+
+    flatFiles.forEach(({ agent, file }) => {
+      const d = new Date(file.lastModified);
+      if (d < start || d > end) return;
+
+      counts[agent] = (counts[agent] || 0) + 1;
+    });
+
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([agent, count]) => ({ agent, count }));
+  }, [flatFiles, windowPreset]);
+
 
 
   const allContractsSorted = useMemo(() => {
@@ -815,6 +839,10 @@ const closingsSoon = useMemo(() => {
         />
 
         <RecentActivityTile activity={recentActivity} />
+        <UploadVelocityTile
+          data={uploadVelocity}
+          windowLabel={windowInfo.label}
+        />
 
         {showBackLink && (
           <div className="pt-1 pb-2 animate-fade-in">
