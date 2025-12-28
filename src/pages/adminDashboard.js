@@ -105,6 +105,33 @@ const getClosingDate = (item) => {
 };
 
 
+const getPresetDateRange = (preset) => {
+  const now = new Date();
+
+  if (preset === "month") {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), 1),
+      end: now,
+      label: "This Month",
+    };
+  }
+
+  if (preset === "quarter") {
+    const q = Math.floor(now.getMonth() / 3);
+    return {
+      start: new Date(now.getFullYear(), q * 3, 1),
+      end: now,
+      label: "This Quarter",
+    };
+  }
+
+  return {
+    start: new Date(now.getFullYear(), 0, 1),
+    end: now,
+    label: "This Year",
+  };
+};
+
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
   const [expanded, setExpanded] = useState({});
@@ -132,6 +159,9 @@ export default function AdminDashboard({ user, signOut }) {
   const [dashboardMode, setDashboardMode] = useState("normal");
   const [focusedAgent, setFocusedAgent] = useState(null);
   const [resultsSource, setResultsSource] = useState(null);
+
+  const [windowPreset, setWindowPreset] = useState("month"); 
+// "month" | "quarter" | "year"
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -342,38 +372,19 @@ const closingsSoon = useMemo(() => {
 
 
   const windowInfo = useMemo(() => {
-    const now = new Date();
+    const { start, end, label } = getPresetDateRange(windowPreset);
 
-    const inMonth = flatFiles.filter(({ file }) => {
+    const chosen = flatFiles.filter(({ file }) => {
       const d = new Date(file.lastModified);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      return d >= start && d <= end;
     });
 
-    const byDays = (days) => {
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - days);
-      return flatFiles.filter(({ file }) => new Date(file.lastModified) >= cutoff);
-    };
-
-    let chosen = inMonth;
-    let label = "This month";
-    if (!chosen.length) {
-      chosen = byDays(60);
-      label = "Last 60 days";
-    }
-    if (!chosen.length) {
-      chosen = byDays(90);
-      label = "Last 90 days";
-    }
-
     const perAgent = {};
+    const counts = {};
+
     chosen.forEach(({ agent, file }) => {
       if (!perAgent[agent]) perAgent[agent] = [];
       perAgent[agent].push(file);
-    });
-
-    const counts = {};
-    chosen.forEach(({ agent }) => {
       counts[agent] = (counts[agent] || 0) + 1;
     });
 
@@ -382,8 +393,16 @@ const closingsSoon = useMemo(() => {
       .slice(0, 5)
       .map(([agent, count]) => ({ agent, count }));
 
-    return { label, total: chosen.length, perAgent, topAgents };
-  }, [flatFiles]);
+    return {
+      label,
+      total: chosen.length,
+      perAgent,
+      topAgents,
+      start,
+      end,
+    };
+  }, [flatFiles, windowPreset]);
+
 
   const allContractsSorted = useMemo(() => {
     const rows = [];
@@ -727,7 +746,10 @@ const closingsSoon = useMemo(() => {
           windowLabel={windowInfo.label}
           windowCount={windowInfo.total}
           topAgents={windowInfo.topAgents}
-          closingSoonCount={closingsSoon.length}
+          /* 🔽 NEW — required for dropdown */
+          windowPreset={windowPreset}
+          setWindowPreset={setWindowPreset}
+          //closingSoonCount={closingsSoon.length}
           onAgentsClick={() => {
             setSearch("");
             setSelectedAgent("");
@@ -745,18 +767,14 @@ const closingsSoon = useMemo(() => {
             setFocusedAgent(null);
           }}
           onWindowClick={() => {
-            const now = new Date();
-            const start = new Date(now.getFullYear(), now.getMonth(), 1);
-
             setSearch("");
             setSelectedAgent("");
             setDateRange({
-              start: start.toISOString().slice(0, 10),
-              end: now.toISOString().slice(0, 10),
+              start: windowInfo.start.toISOString().slice(0, 10),
+              end: windowInfo.end.toISOString().slice(0, 10),
             });
-
             setResultsSource("summary");
-            setDashboardMode("agents"); // 🔑 IMPORTANT
+            setDashboardMode("agents");
             setFocusedAgent(null);
           }}
           onTopAgentClick={(agent) => {
