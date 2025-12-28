@@ -9,6 +9,7 @@ import BulkDeleteTile from "../components/admin/BulkDeleteTile";
 import AgentSection from "../components/admin/AgentSection";
 import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
+import RecentActivityTile from "../components/admin/RecentActivityTile";
 import { Auth } from "aws-amplify";
 
 /* ======================================================
@@ -370,6 +371,32 @@ const closingsSoon = useMemo(() => {
     return arr;
   }, [grouped]);
 
+  const recentActivity = useMemo(() => {
+    const now = Date.now();
+
+    const toRelativeTime = (date) => {
+      const diffSec = Math.floor((now - date.getTime()) / 1000);
+      if (diffSec < 60) return "just now";
+      if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+      if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+      return `${Math.floor(diffSec / 86400)}d ago`;
+    };
+
+    return flatFiles
+      .slice()
+      .sort(
+        (a, b) =>
+          new Date(b.file.lastModified) - new Date(a.file.lastModified)
+      )
+      .slice(0, 20)
+      .map(({ agent, file }) => ({
+        agent,
+        filename: file.filename,
+        transactionType: file.transactionType === "RENTAL" ? "Rental" : "Purchase",
+        lastModified: file.lastModified,
+        relativeTime: toRelativeTime(new Date(file.lastModified)),
+      }));
+  }, [flatFiles]);
 
   const windowInfo = useMemo(() => {
     const { start, end, label } = getPresetDateRange(windowPreset);
@@ -786,6 +813,8 @@ const closingsSoon = useMemo(() => {
             setFocusedAgent(agent);
           }}
         />
+
+        <RecentActivityTile activity={recentActivity} />
 
         {showBackLink && (
           <div className="pt-1 pb-2 animate-fade-in">
