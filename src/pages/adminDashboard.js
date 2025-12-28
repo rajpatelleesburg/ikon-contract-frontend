@@ -134,6 +134,7 @@ const getPresetDateRange = (preset) => {
   };
 };
 
+
 export default function AdminDashboard({ user, signOut }) {
   const [grouped, setGrouped] = useState({});
   const [expanded, setExpanded] = useState({});
@@ -149,7 +150,6 @@ export default function AdminDashboard({ user, signOut }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  const [bulkYears, setBulkYears] = useState(5);
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkConfirmText, setBulkConfirmText] = useState("");
   const [bulkCountdown, setBulkCountdown] = useState(0);
@@ -164,6 +164,9 @@ export default function AdminDashboard({ user, signOut }) {
 
   const [windowPreset, setWindowPreset] = useState("month"); 
 // "month" | "quarter" | "year"
+
+  const [bulkYears, setBulkYears] = useState(5); // default 5 years
+  const [retentionDays, setRetentionDays] = useState(30);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -298,6 +301,58 @@ export default function AdminDashboard({ user, signOut }) {
         0
       ),
     [grouped]
+  );
+
+  const executeBulkDelete = async () => {
+    if (bulkConfirmText !== "DELETE") return;
+
+    try {
+      setBulkInProgress(true);
+
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-archive?retentionDays=${retentionDays}&olderThanYears=${bulkYears}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${idToken}` },
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error(`Bulk delete failed: ${res.status}`);
+      }
+
+      await res.json();
+      await fetchContracts();
+      toast.success("Bulk cleanup request submitted");
+    } catch (err) {
+      console.error("Bulk delete error:", err);
+      setError("Bulk delete failed. Please try again.");
+      toast.error("Bulk delete failed. Please try again.");
+    } finally {
+      closeBulkModal();
+    }
+  };
+
+  const countOldContracts = (years) => {
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - years);
+
+    return Object.values(grouped).reduce((count, agent) => {
+      return (
+        count +
+        (agent.items || []).filter(
+          (item) => new Date(item.lastModified) < cutoff
+        ).length
+      );
+    }, 0);
+  };
+  
+  const bulkDeleteCount = useMemo(
+    () => countOldContracts(bulkYears),
+    [grouped, bulkYears]
   );
 
 
@@ -687,33 +742,6 @@ const closingsSoon = useMemo(() => {
     setBulkInProgress(false);
   };
 
-  const executeBulkDelete = async () => {
-    if (bulkConfirmText !== "DELETE") return;
-
-    try {
-      setBulkInProgress(true);
-      const session = await Auth.currentSession();
-      const idToken = session.getIdToken().getJwtToken();
-
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/bulk-delete?years=${bulkYears}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${idToken}` },
-      });
-
-      if (!res.ok) throw new Error(`Bulk delete failed: ${res.status}`);
-
-      await res.json();
-      await fetchContracts();
-      toast.success("Bulk cleanup request submitted");
-    } catch (err) {
-      console.error("Bulk delete error:", err);
-      setError("Bulk delete failed. Please try again.");
-      toast.error("Bulk delete failed. Please try again.");
-    } finally {
-      closeBulkModal();
-    }
-  };
-
   const handleBackToDashboard = () => {
     setDashboardMode("normal");
     setFocusedAgent(null);
@@ -778,7 +806,6 @@ const closingsSoon = useMemo(() => {
       />
     </div>
   ) : null;
-
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col items-center p-3 sm:p-6">
@@ -871,13 +898,16 @@ const closingsSoon = useMemo(() => {
 
         {hasFilterResults && resultsSection}
 
+
         <BulkDeleteTile
           bulkTileOpen={bulkTileOpen}
           setBulkTileOpen={setBulkTileOpen}
           bulkYears={bulkYears}
           setBulkYears={setBulkYears}
+          retentionDays={retentionDays}
+          setRetentionDays={setRetentionDays}
+          affectedCount={bulkDeleteCount}
           openBulkModal={openBulkModal}
-          bulkOptions={bulkOptions}
         />
       </div>
 
