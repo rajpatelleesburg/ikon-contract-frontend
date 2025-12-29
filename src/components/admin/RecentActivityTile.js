@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ClockIcon, XMarkIcon } from "@heroicons/react/24/outline";
 
-/**
- * Extract address folder from S3 presigned URL
- */
+/* ---------------- helpers ---------------- */
+
 const extractAddressFromPresignedUrl = (presignedUrl) => {
   try {
     if (!presignedUrl) return null;
@@ -35,10 +34,8 @@ const buildDisplayName = (a) => {
     : a.filename || "Contract.pdf";
 };
 
-const isJustNow = (a) => {
-  const t = new Date(a.lastModified).getTime();
-  return t && Date.now() - t <= 2 * 60 * 1000;
-};
+const isJustNow = (a) =>
+  Date.now() - new Date(a.lastModified).getTime() <= 2 * 60 * 1000;
 
 const isToday = (d) => {
   const x = new Date(d);
@@ -64,59 +61,85 @@ const isYesterday = (d) => {
 const isLast72Hours = (d) =>
   Date.now() - new Date(d).getTime() <= 72 * 60 * 60 * 1000;
 
-export default function RecentActivityTile({ activity }) {
+/* Attention pinned first */
+const sortAttentionPinned = (items) =>
+  items.slice().sort((a, b) => {
+    if (a.attention && !b.attention) return -1;
+    if (!a.attention && b.attention) return 1;
+    return new Date(b.lastModified) - new Date(a.lastModified);
+  });
+
+/* ---------------- component ---------------- */
+
+export default function RecentActivityTile({ activity, onOpen }) {
   const [filter, setFilter] = useState("TOP"); // TOP | TODAY | YESTERDAY | LAST_72
   const [openPreview, setOpenPreview] = useState(null);
+  const [visibleCount, setVisibleCount] = useState(3);
 
-  const sorted = useMemo(() => {
-    return (activity || [])
-      .filter((a) => a.lastModified)
-      .sort(
-        (a, b) => new Date(b.lastModified) - new Date(a.lastModified)
-      );
+  /* keyboard: ESC closes preview */
+  useEffect(() => {
+    if (!openPreview) return;
+    const onKey = (e) => e.key === "Escape" && setOpenPreview(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [openPreview]);
+
+  const baseSorted = useMemo(() => {
+    return sortAttentionPinned(
+      (activity || []).filter((a) => a.lastModified)
+    );
   }, [activity]);
 
+  const buckets = useMemo(() => {
+    const today = baseSorted.filter((a) => isToday(a.lastModified));
+    const yesterday = baseSorted.filter((a) => isYesterday(a.lastModified));
+    const last72 = baseSorted.filter((a) => isLast72Hours(a.lastModified));
+    return { today, yesterday, last72 };
+  }, [baseSorted]);
+
   const filtered = useMemo(() => {
+    setVisibleCount(3);
+
     if (filter === "TODAY")
-      return sorted.filter((a) => isToday(a.lastModified));
+      return buckets.today.length ? buckets.today : buckets.yesterday;
 
-    if (filter === "YESTERDAY")
-      return sorted.filter((a) => isYesterday(a.lastModified));
+    if (filter === "YESTERDAY") return buckets.yesterday;
+    if (filter === "LAST_72") return buckets.last72;
 
-    if (filter === "LAST_72")
-      return sorted.filter((a) => isLast72Hours(a.lastModified));
+    return baseSorted.slice(0, 3);
+  }, [filter, buckets, baseSorted]);
 
-    return sorted.slice(0, 3);
-  }, [sorted, filter]);
-
-  if (!sorted.length) return null;
+  if (!baseSorted.length) return null;
 
   const renderRow = (a, idx) => {
-    const highlight = isJustNow(a);
-    const displayName = buildDisplayName(a);
+    const name = buildDisplayName(a);
     const previewUrl = a.presignedUrl || a.url;
 
     return (
       <li
         key={`${idx}-${a.lastModified}`}
-        className={`py-2 flex justify-between gap-3 ${
-          highlight ? "bg-yellow-50" : ""
+        onClick={() => onOpen?.()}
+        className={`py-2 flex justify-between gap-3 cursor-pointer ${
+          isJustNow(a) ? "bg-yellow-50" : ""
         }`}
       >
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            {previewUrl ? (
-              <button
-                onClick={() =>
-                  setOpenPreview({ url: previewUrl, title: displayName })
-                }
-                className="text-sm font-medium text-blue-600 hover:underline truncate text-left"
-              >
-                {displayName}
-              </button>
-            ) : (
-              <div className="text-sm font-medium truncate">{displayName}</div>
-            )}
+            <button
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                previewUrl &&
+                  setOpenPreview({ url: previewUrl, title: name });
+              }}
+              onKeyDown={(e) =>
+                (e.key === "Enter" || e.key === " ") &&
+                setOpenPreview({ url: previewUrl, title: name })
+              }
+              className="text-sm font-medium text-blue-600 hover:underline truncate text-left"
+            >
+              {name}
+            </button>
 
             {a.attention && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 border">
@@ -124,7 +147,7 @@ export default function RecentActivityTile({ activity }) {
               </span>
             )}
 
-            {highlight && (
+            {isJustNow(a) && (
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 border">
                 Just now
               </span>
@@ -155,26 +178,51 @@ export default function RecentActivityTile({ activity }) {
             </h3>
           </div>
 
-          {sorted.length > 3 && (
+          {baseSorted.length > 3 && (
             <select
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={(e) => {
+                setFilter(e.target.value);
+                onOpen?.();
+              }}
               className="text-xs border rounded px-2 py-1 bg-white"
             >
               <option value="TOP">Recent (Top 3)</option>
-              <option value="TODAY">Today</option>
-              <option value="YESTERDAY">Yesterday</option>
-              <option value="LAST_72">Last 72 Hours</option>
+              <option value="TODAY">Today · {buckets.today.length}</option>
+              <option value="YESTERDAY">
+                Yesterday · {buckets.yesterday.length}
+              </option>
+              <option value="LAST_72">
+                Last 72 Hours · {buckets.last72.length}
+              </option>
             </select>
           )}
         </div>
 
-        <ul className="divide-y bg-white rounded-xl border max-h-[360px] overflow-hidden">
-          {filtered.map(renderRow)}
-        </ul>
+        <div className="relative">
+          <ul className="divide-y bg-white rounded-xl border max-h-[360px] overflow-hidden">
+            {filtered.slice(0, visibleCount).map(renderRow)}
+          </ul>
+
+          {filtered.length > visibleCount && (
+            <button
+              onClick={() => {
+                setVisibleCount((n) => n + 3);
+                onOpen?.();
+              }}
+              className="mt-2 text-xs text-blue-600 hover:underline"
+            >
+              Load more
+            </button>
+          )}
+
+          {filtered.length > 3 && (
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-white to-transparent rounded-b-xl" />
+          )}
+        </div>
       </div>
 
-      {/* INLINE PREVIEW MODAL */}
+      {/* Preview modal */}
       {openPreview?.url && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3">
           <div className="bg-white w-full max-w-5xl rounded-2xl overflow-hidden">
@@ -186,7 +234,6 @@ export default function RecentActivityTile({ activity }) {
                 <XMarkIcon className="h-5 w-5" />
               </button>
             </div>
-
             <iframe
               src={openPreview.url}
               className="w-full h-[75vh]"

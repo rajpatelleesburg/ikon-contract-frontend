@@ -927,7 +927,11 @@ const closingsSoon = useMemo(() => {
   const hasFilterResults = resultsSource === "filters" && filteredHasResults;
   const showAnyResults = hasSummaryResults || hasFilterResults;
   const isFilterMode = hasFilterResults;
-  const showBackLink = hasSummaryResults || hasFilterResults || bulkTileOpen;
+  const showBackLink =
+                        hasSummaryResults ||
+                        hasFilterResults ||
+                        bulkTileOpen ||
+                        resultsSource === "recentActivity";
 
   const focusedGrouped = useMemo(() => {
     if (!focusedAgent) return grouped;
@@ -1045,7 +1049,15 @@ const closingsSoon = useMemo(() => {
 
         {hasSummaryResults && resultsSection}
 
-        <RecentActivityTile activity={recentActivity} />
+        <RecentActivityTile
+          activity={recentActivity}
+          onOpen={() => {
+            setResultsSource("recentActivity");
+            setDashboardMode("recentActivity");
+            setFocusedAgent(null);
+          }}
+        />
+
         <UploadVelocityTile
           data={uploadVelocity}
           windowLabel={windowInfo.label}
