@@ -877,6 +877,29 @@ const closingsSoon = useMemo(() => {
     setDryRunResult(null);
   };
 
+  useEffect(() => {
+    if (!user) return;
+
+    // Do not auto-refresh during destructive operations
+    if (showBulkModal || showDeleteModal) return;
+
+    const interval = setInterval(async () => {
+      try {
+        await fetchContracts();
+        await fetchRetentionAlertsSent();
+      } catch (e) {
+        console.warn("Auto-refresh failed", e);
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(interval);
+  }, [
+    user,
+    showBulkModal,
+    showDeleteModal
+  ]);
+
+
   const hasSummaryResults = resultsSource === "summary" && dashboardMode !== "normal";
   const hasFilterResults = resultsSource === "filters" && filteredHasResults;
   const showAnyResults = hasSummaryResults || hasFilterResults;
