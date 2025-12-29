@@ -361,7 +361,26 @@ export default function AdminDashboard({ user, signOut }) {
 
       await res.json();
       await fetchContracts();
-      toast.success("Bulk cleanup request submitted");
+      const ts = Date.now();
+
+      toast.success(
+        (t) => (
+          <span>
+            <strong>Bulk cleanup completed.</strong>{" "}
+            <button
+              onClick={() => {
+                toast.dismiss(t.id);
+                window.location.href = `/admin/audit-log?from=bulk-archive&ts=${ts}`;
+              }}
+              className="underline ml-1"
+            >
+              View audit log
+            </button>
+          </span>
+        ),
+        { duration: 8000 }
+      );
+
     } catch (err) {
       console.error("Bulk delete error:", err);
       setError("Bulk delete failed. Please try again.");
