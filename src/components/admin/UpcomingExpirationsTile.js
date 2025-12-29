@@ -22,13 +22,39 @@ export default function UpcomingExpirationsTile({ items, alertsSent }) {
             </div>
 
             {alertsSent?.[i.contractPk] && (
-                <span
-                title="Retention alert sent"
-                className="text-green-600 text-lg"
-                >
+            <span
+                className="relative group text-green-600 text-lg cursor-default"
+                aria-label="Retention alert sent"
+            >
                 ✓
+                <span
+                className="
+                    absolute
+                    bottom-full
+                    left-1/2
+                    -translate-x-1/2
+                    mb-1
+                    hidden
+                    group-hover:block
+                    whitespace-nowrap
+                    rounded
+                    bg-slate-800
+                    px-2
+                    py-1
+                    text-xs
+                    text-white
+                    shadow
+                    z-50
+                "
+                >
+                Alert sent on{" "}
+                {new Date(
+                    alertsSent[i.contractPk].sentAt
+                ).toLocaleDateString()}
                 </span>
+            </span>
             )}
+
             </li>
         ))}
     </ul>
