@@ -170,7 +170,7 @@ export default function AdminDashboard({ user, signOut }) {
   const [retentionDays, setRetentionDays] = useState(30);
   const [dryRunResult, setDryRunResult] = useState(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
-
+  const [retentionAlertsSent, setRetentionAlertsSent] = useState({});
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -183,8 +183,10 @@ export default function AdminDashboard({ user, signOut }) {
 
   useEffect(() => {
     if (!user) return;
-    fetchContracts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    (async () => {
+      await fetchContracts();
+      await fetchRetentionAlertsSent();
+    })();
   }, [user]);
 
   const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
@@ -207,6 +209,7 @@ export default function AdminDashboard({ user, signOut }) {
           rows.push({
             agent: agentName,
             label: item.label,
+            contractPk: item.pk,
             eligibleAt,
             daysLeft: Math.ceil((eligibleAt - now) / (1000 * 60 * 60 * 24)),
           });
@@ -321,6 +324,39 @@ export default function AdminDashboard({ user, signOut }) {
     }
   };
 
+  const fetchRetentionAlertsSent = async () => {
+    try {
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/retention-alerts-sent`,
+        {
+          headers: { Authorization: `Bearer ${idToken}` },
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("Retention alerts fetch failed", {
+          status: res.status,
+          body: text,
+        });
+
+        // Do NOT break dashboard
+        setRetentionAlertsSent({});
+        return;
+      }
+
+    const data = await res.json();
+      setRetentionAlertsSent(data.sent || {});
+
+    } catch (e) {
+      console.error("Retention alert status fetch failed", e);
+    }
+  };
+
+
   const agentNames = useMemo(
     () =>
       Object.values(grouped)
@@ -393,6 +429,7 @@ export default function AdminDashboard({ user, signOut }) {
 
       await res.json();
       await fetchContracts();
+      await fetchRetentionAlertsSent();
       const ts = Date.now();
 
       toast.success(
@@ -984,7 +1021,11 @@ const closingsSoon = useMemo(() => {
         />
 
         {hasFilterResults && resultsSection}
-        <UpcomingExpirationsTile items={upcomingExpirations} />
+
+        <UpcomingExpirationsTile
+          items={upcomingExpirations}
+          alertsSent={retentionAlertsSent}
+        />
 
         <BulkDeleteTile
           bulkTileOpen={bulkTileOpen}
