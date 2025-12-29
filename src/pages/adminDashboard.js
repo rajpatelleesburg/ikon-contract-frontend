@@ -524,23 +524,22 @@ const closingsSoon = useMemo(() => {
 
         (item.files || []).forEach((f) => {
           arr.push({
-            // ✅ ALWAYS USE agentName FOR DISPLAY
             agent: agentName,
-
-            // (optional but future-proof)
             agentId,
+
+            // 👇 ADD PROPERTY CONTEXT
+            address: item.address,
 
             file: {
               ...f,
-
-              // ✅ PURCHASE-ONLY FIELDS
               stage: isRental ? null : item.stage,
               stageLabel: isRental ? null : item.stageLabel,
               attention: isRental ? null : item.attention,
-
-              // ✅ SORTING / FILTERING
               lastModified: item.lastModified,
               transactionType: item.type,
+
+              // 👇 ENSURE URL EXISTS
+              presignedUrl: f.downloadUrl || f.url,
             },
           });
         });
@@ -549,6 +548,25 @@ const closingsSoon = useMemo(() => {
 
     return arr;
   }, [grouped]);
+
+  const buildContractFilename = (activity) => {
+    const addr = activity.address;
+    if (!addr) return "Contract.pdf";
+
+    const street = [
+      addr.streetNumber,
+      addr.streetName,
+    ].filter(Boolean).join(" ");
+
+    const type =
+      activity.transactionType === "RENTAL"
+        ? "Rental"
+        : activity.transactionType === "LEASE"
+        ? "Lease"
+        : "Contract";
+
+    return `${street} ${type}.pdf`;
+  };
 
   const recentActivity = useMemo(() => {
     const now = Date.now();
@@ -561,11 +579,16 @@ const closingsSoon = useMemo(() => {
       return `${Math.floor(diffSec / 86400)}d ago`;
     };
 
-    const rows = flatFiles.map(({ agent, file }) => ({
+    const rows = flatFiles.map(({ agent, address, file }) => ({
       agent,
+
+      // 👇 REQUIRED BY TILE
+      address,
+      presignedUrl: file.presignedUrl,
+
       filename: file.filename,
       transactionType: file.transactionType === "RENTAL" ? "Rental" : "Purchase",
-      attention: file.attention, // 🔴 KEY
+      attention: file.attention,
       lastModified: file.lastModified,
       relativeTime: toRelativeTime(new Date(file.lastModified)),
     }));
@@ -1012,12 +1035,6 @@ const closingsSoon = useMemo(() => {
           }}
         />
 
-        <RecentActivityTile activity={recentActivity} />
-        <UploadVelocityTile
-          data={uploadVelocity}
-          windowLabel={windowInfo.label}
-        />
-
         {showBackLink && (
           <div className="pt-1 pb-2 animate-fade-in">
             <button onClick={handleBackToDashboard} className="text-blue-600 hover:underline text-sm">
@@ -1027,6 +1044,12 @@ const closingsSoon = useMemo(() => {
         )}
 
         {hasSummaryResults && resultsSection}
+
+        <RecentActivityTile activity={recentActivity} />
+        <UploadVelocityTile
+          data={uploadVelocity}
+          windowLabel={windowInfo.label}
+        />
 
         <FiltersTile
           filtersOpen={filtersOpen}
