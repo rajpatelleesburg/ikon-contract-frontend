@@ -11,6 +11,7 @@ import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
 import RecentActivityTile from "../components/admin/RecentActivityTile";
 import UploadVelocityTile from "../components/admin/UploadVelocityTile";
+import UpcomingExpirationsTile from "../components/admin/UpcomingExpirationsTile"
 import { Auth } from "aws-amplify";
 
 /* ======================================================
@@ -169,7 +170,7 @@ export default function AdminDashboard({ user, signOut }) {
   const [retentionDays, setRetentionDays] = useState(30);
   const [dryRunResult, setDryRunResult] = useState(null);
   const [dryRunLoading, setDryRunLoading] = useState(false);
-
+  const [retentionAlertsSent, setRetentionAlertsSent] = useState({});
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -182,9 +183,43 @@ export default function AdminDashboard({ user, signOut }) {
 
   useEffect(() => {
     if (!user) return;
-    fetchContracts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    (async () => {
+      await fetchContracts();
+      await fetchRetentionAlertsSent();
+    })();
   }, [user]);
+
+  const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+  const ALERT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+  const upcomingExpirations = useMemo(() => {
+    const now = Date.now();
+
+    const rows = [];
+
+    Object.values(grouped).forEach(({ agentName, items }) => {
+      (items || []).forEach((item) => {
+        const createdAt = new Date(item.lastModified).getTime();
+        const eligibleAt = createdAt + THREE_YEARS_MS;
+
+        if (
+          eligibleAt > now &&
+          eligibleAt <= now + ALERT_WINDOW_MS
+        ) {
+          rows.push({
+            agent: agentName,
+            label: item.label,
+            contractPk: item.pk,
+            eligibleAt,
+            daysLeft: Math.ceil((eligibleAt - now) / (1000 * 60 * 60 * 24)),
+          });
+        }
+      });
+    });
+
+    return rows.sort((a, b) => a.eligibleAt - b.eligibleAt);
+  }, [grouped]);
+
 
   const fetchContracts = async () => {
     try {
@@ -289,6 +324,39 @@ export default function AdminDashboard({ user, signOut }) {
     }
   };
 
+  const fetchRetentionAlertsSent = async () => {
+    try {
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken().getJwtToken();
+
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL}/admin/retention-alerts-sent`,
+        {
+          headers: { Authorization: `Bearer ${idToken}` },
+        }
+      );
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("Retention alerts fetch failed", {
+          status: res.status,
+          body: text,
+        });
+
+        // Do NOT break dashboard
+        setRetentionAlertsSent({});
+        return;
+      }
+
+    const data = await res.json();
+      setRetentionAlertsSent(data.sent || {});
+
+    } catch (e) {
+      console.error("Retention alert status fetch failed", e);
+    }
+  };
+
+
   const agentNames = useMemo(
     () =>
       Object.values(grouped)
@@ -361,7 +429,27 @@ export default function AdminDashboard({ user, signOut }) {
 
       await res.json();
       await fetchContracts();
-      toast.success("Bulk cleanup request submitted");
+      await fetchRetentionAlertsSent();
+      const ts = Date.now();
+
+      toast.success(
+        (t) => (
+          <span>
+            <strong>Bulk cleanup completed.</strong>{" "}
+            <button
+              onClick={() => {
+                toast.dismiss(t.id);
+                window.location.href = `/admin/audit-log?from=bulk-archive&ts=${ts}`;
+              }}
+              className="underline ml-1"
+            >
+              View audit log
+            </button>
+          </span>
+        ),
+        { duration: 8000 }
+      );
+
     } catch (err) {
       console.error("Bulk delete error:", err);
       setError("Bulk delete failed. Please try again.");
@@ -934,6 +1022,10 @@ const closingsSoon = useMemo(() => {
 
         {hasFilterResults && resultsSection}
 
+        <UpcomingExpirationsTile
+          items={upcomingExpirations}
+          alertsSent={retentionAlertsSent}
+        />
 
         <BulkDeleteTile
           bulkTileOpen={bulkTileOpen}
