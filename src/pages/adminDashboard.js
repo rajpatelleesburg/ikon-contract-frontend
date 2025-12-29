@@ -11,6 +11,7 @@ import DeleteModal from "../components/admin/DeleteModal";
 import BulkDeleteModal from "../components/admin/BulkDeleteModal";
 import RecentActivityTile from "../components/admin/RecentActivityTile";
 import UploadVelocityTile from "../components/admin/UploadVelocityTile";
+import UpcomingExpirationsTile from "../components/admin/UpcomingExpirationsTile"
 import { Auth } from "aws-amplify";
 
 /* ======================================================
@@ -185,6 +186,37 @@ export default function AdminDashboard({ user, signOut }) {
     fetchContracts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+  const ALERT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+  const upcomingExpirations = useMemo(() => {
+    const now = Date.now();
+
+    const rows = [];
+
+    Object.values(grouped).forEach(({ agentName, items }) => {
+      (items || []).forEach((item) => {
+        const createdAt = new Date(item.lastModified).getTime();
+        const eligibleAt = createdAt + THREE_YEARS_MS;
+
+        if (
+          eligibleAt > now &&
+          eligibleAt <= now + ALERT_WINDOW_MS
+        ) {
+          rows.push({
+            agent: agentName,
+            label: item.label,
+            eligibleAt,
+            daysLeft: Math.ceil((eligibleAt - now) / (1000 * 60 * 60 * 24)),
+          });
+        }
+      });
+    });
+
+    return rows.sort((a, b) => a.eligibleAt - b.eligibleAt);
+  }, [grouped]);
+
 
   const fetchContracts = async () => {
     try {
@@ -952,7 +984,7 @@ const closingsSoon = useMemo(() => {
         />
 
         {hasFilterResults && resultsSection}
-
+        <UpcomingExpirationsTile items={upcomingExpirations} />
 
         <BulkDeleteTile
           bulkTileOpen={bulkTileOpen}
