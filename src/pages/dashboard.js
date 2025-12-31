@@ -829,7 +829,7 @@ function DashboardPage({ user, signOut }) {
                       type="date"
                       className="w-full border px-3 py-2 rounded text-sm"
                       min={daysFromTodayISO(-45)}
-                      max={daysFromTodayISO(45)}
+                      max={monthsFromTodayISO(12)}
                       value={stageForm.closingDate || ""}
                       onChange={(e) =>
                         setStageForm((p) => ({
@@ -895,7 +895,7 @@ function DashboardPage({ user, signOut }) {
                               type="date"
                               className="border px-3 py-1 rounded text-sm w-full"
                               min={daysFromTodayISO(-45)}   // ✅ 45 days back
-                              max={daysFromTodayISO(45)}    // ✅ 45 days forward
+                              max={monthsFromTodayISO(12)}    // ✅ 45 days forward
                               value={existing.expiresAt || ""}
                               onChange={(e) =>
                                 setStageForm((prev) => ({

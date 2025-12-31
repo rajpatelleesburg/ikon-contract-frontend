@@ -28,6 +28,17 @@ const STAGE_LABELS = {
   CLOSED: "Closed",
 };
 
+
+const isRiskContract = (item) => {
+  const contingencies = item?.stageData?.contingencies || [];
+  const expiringSoon = contingencies.some((c) => {
+    if (!c.expiresAt) return false;
+    const diff = new Date(c.expiresAt).getTime() - Date.now();
+    return diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000;
+  });
+  return expiringSoon || item.attention === "Closing approaching";
+};
+
 const ATTENTION_REASON = {
   UPLOADED: "EMD not collected",
   EMD_COLLECTED: "Contingencies pending",
@@ -957,6 +968,23 @@ const closingsSoon = useMemo(() => {
   const resultsSection = showAnyResults ? (
     <div className="space-y-3 animate-fade-in">
       <AgentSection
+        onNudgeAgent={async ({ agentEmail, contractLabel }) => {
+          try {
+            await sendNudgeEmail({ agentEmail, contractLabel });
+            toast.success("Nudge email sent");
+          } catch (e) {
+            toast.error(e.message || "Failed to send nudge");
+          }
+        }}
+        onAdminOverride={async ({ contractId, override }) => {
+          try {
+            await persistAdminOverride({ contractId, override });
+            toast.success("Admin override saved");
+          } catch (e) {
+            toast.error(e.message || "Failed to save override");
+          }
+        }}
+        
         mode={dashboardMode}
         grouped={dataForAgents}
         filteredGrouped={filteredGrouped}
