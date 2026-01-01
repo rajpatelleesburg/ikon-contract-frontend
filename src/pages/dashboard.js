@@ -216,6 +216,11 @@ const daysFromTodayISO = (offset) => {
   return d.toISOString().split("T")[0];
 };
 
+const monthsFromTodayISO = (months) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().split("T")[0];
+};
 
 
 /* =========================
@@ -392,9 +397,11 @@ function DashboardPage({ user, signOut }) {
     if (isRental(f)) return;
     if (f.stage === "CLOSED") return;
 
-    setSelected(f);
-    setNextStage(getNextStage(f.stage));
-    setStageForm({});
+    const source = selected?.contractId === f.contractId ? selected : f;
+
+    setSelected(source);
+    setNextStage(getNextStage(source.stage));
+    setStageForm(source.stageData || {});
     setStageModalOpen(true);
   };
 
@@ -409,54 +416,93 @@ function DashboardPage({ user, signOut }) {
      SAVE STAGE + OPTIONAL UPLOADS
   ========================= */
 
-  const saveStage = async () => {
+  const saveStage = async ({ advance = false } = {}) => {
+    if (!selected || !nextStage) return;
 
-    if (nextStage === "CLOSED") {
+    let effectiveStage;
+
+    // CONTINGENCIES is the only editable stage
+    if (selected.stage === "CONTINGENCIES") {
+      effectiveStage = advance ? nextStage : selected.stage;
+    } else {
+      // UPLOADED → EMD, EMD → CONTINGENCIES
+      effectiveStage = nextStage;
+    }
+
+    // 🔒 CLOSED validation (only when actually closing)
+    if (effectiveStage === "CLOSED") {
       if (!stageForm.titleCompany?.trim()) {
         alert("Title Company Name is required.");
         return;
       }
-
       if (!stageForm.commissionAmount) {
         alert("Commission Amount is required.");
         return;
       }
-
       if (!(stageForm.altaFile instanceof File)) {
         alert("ALTA / Settlement Statement (PDF) is required.");
         return;
       }
-
       if (stageForm.altaFile.type !== "application/pdf") {
         alert("ALTA must be a PDF file.");
         return;
       }
-
       if (stageForm.altaFile.size < 20_000) {
         alert("ALTA file looks too small. Please upload the correct document.");
         return;
       }
     }
 
-    if (!selected || !nextStage) return;
-
-    const prevStage = selected.stage;
-    selected.stage = nextStage;
-    closeStageModal();
-
     try {
       const session = await Auth.currentSession();
       const token = session.getAccessToken().getJwtToken();
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
 
-      // ✅ Identify PURCHASE primary contract safely
+      // =========================================================
+      // CASE 1 — CONTINGENCIES SAVE (NO STAGE TRANSITION)
+      // =========================================================
+      if (selected.stage === effectiveStage) {
+        const res = await fetch(`${apiUrl}/contract/stage`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            contractId: selected.contractId,
+            stage: selected.stage,        // 🔑 REQUIRED by backend
+            stageData: stageForm || {},
+          }),
+        });
+
+        if (!res.ok) {
+          const t = await res.text();
+          console.error("StageData update failed:", t);
+          throw new Error("StageData update failed");
+        }
+
+        // Optimistic local update for edit-again UX
+        setSelected((prev) =>
+          prev ? { ...prev, stageData: stageForm } : prev
+        );
+
+        closeStageModal();
+        fetchContracts();
+        return; // 🔴 IMPORTANT: stop here
+      }
+
+      // =========================================================
+      // CASE 2 — REAL STAGE TRANSITION
+      // =========================================================
+
+      // Purchase primary contract detection
       const isPurchase =
         !isRental(selected) &&
         String(selected?.fileName || "").toLowerCase() === "contract.pdf" &&
         !!selected?.address;
 
-      // ✅ If moving to CLOSED for PURCHASE: upload ALTA + comm json first
-      if (nextStage === "CLOSED" && isPurchase) {
+      // If moving to CLOSED, upload ALTA + commission files first
+      if (effectiveStage === "CLOSED" && isPurchase) {
         const idPayload = session.getIdToken().payload;
 
         const agentFolder =
@@ -464,7 +510,7 @@ function DashboardPage({ user, signOut }) {
             ? `${idPayload.given_name}-${idPayload.family_name}`.replace(/\s+/g, "-")
             : (idPayload.email || "").split("@")[0];
 
-        // 1️⃣ ALTA upload (optional)
+        // ALTA upload
         if (stageForm?.altaFile instanceof File) {
           const altaKey = await presignAndPut({
             apiUrl,
@@ -476,12 +522,10 @@ function DashboardPage({ user, signOut }) {
             file: stageForm.altaFile,
             filename: "ALTA.pdf",
           });
-
-          // Replace File object with reference only
           stageForm.altaFile = { s3Key: altaKey };
         }
 
-        // 2️⃣ Commission Disbursement JSON (only if meaningful data exists)
+        // Commission JSON
         if (
           stageForm.commissionNote ||
           stageForm.commissionAmount ||
@@ -522,7 +566,7 @@ function DashboardPage({ user, signOut }) {
         }
       }
 
-      // ✅ NOW save stage metadata (this was missing before)
+      // Stage transition call
       const res = await fetch(`${apiUrl}/contract/stage`, {
         method: "POST",
         headers: {
@@ -531,31 +575,59 @@ function DashboardPage({ user, signOut }) {
         },
         body: JSON.stringify({
           contractId: selected.contractId,
-          stage: nextStage,
-          stageData: stageForm || {},
+          stage: effectiveStage,
+          stageData:
+            effectiveStage === "CONTINGENCIES" &&
+            selected.stage === "EMD_COLLECTED"
+              ? {
+                  ...stageForm,
+                  emdCollectedAt: new Date().toISOString(),
+                }
+              : stageForm || {},
         }),
       });
 
       if (!res.ok) {
         const t = await res.text();
-        console.error("Stage update failed:", t);
-        throw new Error("Stage update failed");
+        console.error("Stage transition failed:", t);
+        throw new Error("Stage transition failed");
       }
 
-      // Refresh dashboard
+      // Optimistic update for reopening modal
+      setSelected((prev) =>
+        prev
+          ? {
+              ...prev,
+              stage: effectiveStage,
+              stageData: stageForm,
+            }
+          : prev
+      );
+
+      closeStageModal();
       fetchContracts();
     } catch (err) {
       console.error(err);
-      selected.stage = prevStage;
       fetchContracts();
       alert("Unable to update stage.");
     }
-  };
-
+};
 
   /* =========================
      RENDER
   ========================= */
+  const displayStage =
+  selected?.stage === "EMD_COLLECTED"
+    ? "CONTINGENCIES"
+    : selected?.stage;
+
+  const isClosingSaveDisabled =
+        selected?.stage === "CLOSED" &&
+        (
+          !stageForm.titleCompany?.trim() ||
+          !stageForm.commissionAmount ||
+          !(stageForm.altaFile instanceof File)
+        );
 
   return (
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
@@ -743,12 +815,12 @@ function DashboardPage({ user, signOut }) {
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
             <div className="bg-white rounded-xl w-full max-w-lg p-6 space-y-4 max-h-[90vh] overflow-y-auto">
               <h3 className="text-lg font-bold">
-                Update Stage — {STAGE_LABELS[selected.stage]}
+                Update Stage — {STAGE_LABELS[displayStage]}
               </h3>
 
               <div className="flex gap-1 text-xs">
                 {STAGE_ORDER.map((s, idx) => {
-                  const done = STAGE_ORDER.indexOf(selected.stage) >= idx;
+                  const done = STAGE_ORDER.indexOf(displayStage) >= idx;
                   return (
                     <div
                       key={s}
@@ -764,7 +836,7 @@ function DashboardPage({ user, signOut }) {
                 })}
               </div>
 
-              {nextStage === "EMD_COLLECTED" && (() => {
+              {(selected?.stage === "UPLOADED") && (() => {
                 const state = getPropertyStateSafe(selected.address);
                 return (
                   <div className="space-y-2">
@@ -818,7 +890,7 @@ function DashboardPage({ user, signOut }) {
                 );
               })()}
 
-              {nextStage === "CONTINGENCIES" && (
+              {(selected?.stage === "EMD_COLLECTED" || selected?.stage === "CONTINGENCIES") && (
                 <div className="space-y-3">
                   {/* EXPECTED CLOSING DATE (OPTIONAL – PART OF CONTINGENCIES) */}
                   <div className="space-y-1">
@@ -936,7 +1008,7 @@ function DashboardPage({ user, signOut }) {
                 </div>
               )}
 
-              {nextStage === "CLOSED" && (
+              {selected?.stage === "CLOSED" && (
                 <div className="space-y-2">
                   <input
                     type="text"
@@ -989,7 +1061,7 @@ function DashboardPage({ user, signOut }) {
                     </label>
                     <textarea
                       rows={4}
-                      placeholder="Example: referral fee, split, etc."
+                      placeholder="Please enter titlle company name, commission amount, upload ALTA and then save will be enabled 1st before saving. Any special instructions for Example: referral fee, split, etc."
                       className="w-full border px-3 py-2 rounded text-sm"
                       value={stageForm.commissionNote || ""}
                       onChange={(e) =>
@@ -1003,6 +1075,23 @@ function DashboardPage({ user, signOut }) {
                 </div>
               )}
 
+              {/* 🔹 Contingencies guidance (ADD THIS BLOCK) */}
+              {displayStage === "CONTINGENCIES" && (
+                <div className="text-sm space-y-1 text-slate-600 border-t pt-3">
+                  <div>
+                    <strong>Save</strong> — Contingencies remain editable
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-green-500 text-white text-xs">
+                      ✓
+                    </span>
+                    <span>
+                      <strong>Next Stage</strong> — Contingencies done
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-3">
                 <button
                   onClick={closeStageModal}
@@ -1010,12 +1099,27 @@ function DashboardPage({ user, signOut }) {
                 >
                   Cancel
                 </button>
+
                 <button
-                  onClick={saveStage}
-                  className="px-4 py-2 bg-blue-600 text-white rounded"
+                  onClick={() => saveStage({ advance: false })}
+                  disabled={isClosingSaveDisabled}
+                  className={`px-4 py-2 border rounded ${
+                    isClosingSaveDisabled
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : ""
+                  }`}
                 >
                   Save
                 </button>
+
+                {displayStage  === "CONTINGENCIES" && (
+                  <button
+                    onClick={() => saveStage({ advance: true })}
+                    className="px-4 py-2 bg-blue-600 text-white rounded"
+                  >
+                    Next Stage
+                  </button>
+                )}
               </div>
             </div>
           </div>
