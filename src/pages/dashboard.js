@@ -430,7 +430,11 @@ function DashboardPage({ user, signOut }) {
     }
 
     // 🔒 CLOSED validation (only when actually closing)
-    if (effectiveStage === "CLOSED") {
+      if (
+        effectiveStage === "CLOSED" &&
+        selected.stage === "CLOSED" &&   // 🔑 only validate when already closed
+        !advance                         // 🔑 Save, not Next Stage
+      ) {
       if (!stageForm.titleCompany?.trim()) {
         alert("Title Company Name is required.");
         return;
@@ -501,8 +505,13 @@ function DashboardPage({ user, signOut }) {
         String(selected?.fileName || "").toLowerCase() === "contract.pdf" &&
         !!selected?.address;
 
-      // If moving to CLOSED, upload ALTA + commission files first
-      if (effectiveStage === "CLOSED" && isPurchase) {
+        // Upload closing artifacts ONLY when saving in CLOSED stage
+        if (
+          effectiveStage === "CLOSED" &&
+          selected.stage === "CLOSED" &&   // already in closed
+          !advance &&                      // Save, not Next Stage
+          isPurchase
+        ) {
         const idPayload = session.getIdToken().payload;
 
         const agentFolder =
