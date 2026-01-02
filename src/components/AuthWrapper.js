@@ -414,7 +414,9 @@ export default function AuthWrapper({ children }) {
                 // mark that this user should land on create-profile after signup
                 try {
                   localStorage.setItem("ikon_post_signup", "1");
-                } catch {}
+                } catch {
+                   // intentionally empty
+                }
 
                 return Auth.signUp({
                   username: email,
@@ -438,12 +440,16 @@ export default function AuthWrapper({ children }) {
                 let postSignup = false;
                 try {
                   postSignup = localStorage.getItem("ikon_post_signup") === "1";
-                } catch {}
+                } catch {
+                   // intentionally empty
+                }
 
                 if (postSignup) {
                   try {
                     localStorage.removeItem("ikon_post_signup");
-                  } catch {}
+                  } catch {
+                     // intentionally empty
+                  }
                   if (router.pathname !== "/create-profile") {
                     router.replace("/create-profile");
                     return null;

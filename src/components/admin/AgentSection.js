@@ -15,6 +15,15 @@ const STAGE_COLORS = {
 const isPdfPreviewable = (f) =>
   String(f.filename || "").toLowerCase().endsWith(".pdf");
 
+
+const formatDate = (d) => (d ? new Date(d).toLocaleDateString() : "—");
+const isExpiringSoon = (d) => {
+  if (!d) return false;
+  const diff = new Date(d).getTime() - Date.now();
+  return diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000;
+};
+
+
 export default function AgentSection({
   mode,
   grouped,
@@ -31,6 +40,8 @@ export default function AgentSection({
      STATE
   ========================= */
   const [pdfPreview, setPdfPreview] = useState(null);
+  const [visibleCountByAgent, setVisibleCountByAgent] = useState({});
+  const INITIAL_LIMIT = 3;
   const [zoom, setZoom] = useState(1);
 
   /* =========================
@@ -81,6 +92,7 @@ export default function AgentSection({
      STAGE + ATTENTION
   ========================= */
   const renderStageMeta = (item) => {
+    const contingencies = item?.stageData?.contingencies || [];
     const stage = item?.stage || "UPLOADED";
     const label = item?.stageLabel || stage;
     const attention = item?.attention;
@@ -94,11 +106,54 @@ export default function AgentSection({
         >
           {label}
         </span>
-        {attention && (
-          <span className="text-[11px] text-red-600 font-semibold">
-            ⚠ {attention}
-          </span>
-        )}
+
+{stage === "CONTINGENCIES" && contingencies.length > 0 ? (
+  <details className="text-[11px] text-red-600 font-semibold">
+    <summary className="cursor-pointer select-none flex items-center gap-2">
+      ⚠ Contingencies pending
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          alert("Nudge sent to agent (placeholder)");
+        }}
+        className="ml-2 text-blue-600 underline text-[11px]"
+      >
+        Nudge Agent
+      </button>
+    </summary>
+    <ul className="ml-4 mt-1 list-disc text-slate-700 font-normal">
+      {contingencies.map((c) => (
+        <li
+          key={c.type}
+          className={isExpiringSoon(c.expiresAt) ? "text-red-700 font-semibold" : ""}
+        >
+          {c.type.replace(/_/g, " ")} — {formatDate(c.expiresAt)}
+          {isExpiringSoon(c.expiresAt) && " (expiring soon)"}
+          <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-600">
+            <input
+              type="checkbox"
+              onChange={(e) => {
+                item.stageData = {
+                  ...item.stageData,
+                  adminOverride: e.target.checked,
+                };
+              }}
+            />
+            Admin Override
+          </label>
+        </li>
+      ))}
+    </ul>
+  </details>
+) : (
+  attention && (
+    <span className="text-[11px] text-red-600 font-semibold">
+      ⚠ {attention}
+    </span>
+  )
+)}
+
       </div>
     );
   };
@@ -185,53 +240,74 @@ export default function AgentSection({
                 <span>{isOpen ? "▾" : "▸"}</span>
               </div>
 
-              {isOpen && (
-                <ul className="mt-3 space-y-3">
-                  {items.map((item) => (
-                    <li key={item.label} className="bg-white p-3 rounded border">
-                      <div className="flex justify-between">
-                        <div>
-                          <div className="font-semibold">
-                            {highlight(item.label)}
-                          </div>
-                          {renderStageMeta(item)}
-                        </div>
+              
+{isOpen && (
+  <>
+    <ul className="mt-3 space-y-3">
+      {items
+        .slice(0, visibleCountByAgent[agentId] || INITIAL_LIMIT)
+        .map((item) => (
+          <li key={item.label} className="bg-white p-3 rounded border">
+            <div className="flex justify-between">
+              <div>
+                <div className="font-semibold">
+                  {highlight(item.label)}
+                </div>
+                {renderStageMeta(item)}
+              </div>
 
-                        <button
-                          onClick={() => onDelete(agentName, item)}
-                          className="text-xs px-3 py-2 bg-red-600 text-white rounded"
-                        >
-                          Delete
-                        </button>
-                      </div>
+              <button
+                onClick={() => onDelete(agentName, item)}
+                className="text-xs px-3 py-2 bg-red-600 text-white rounded"
+              >
+                Delete
+              </button>
+            </div>
 
-                      <div className="mt-2 pl-4 space-y-1">
-                        {item.files.map((f) => (
-                          <div key={f.key} className="text-sm">
-                            {isPdfPreviewable(f) ? (
-                              <button
-                                onClick={() => setPdfPreview(f)}
-                                className="text-blue-600 underline"
-                              >
-                                {highlight(f.filename)}
-                              </button>
-                            ) : (
-                              <a
-                                href={f.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-blue-600 underline"
-                              >
-                                {highlight(f.filename)}
-                              </a>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <div className="mt-2 pl-4 space-y-1">
+              {item.files.map((f) => (
+                <div key={f.key} className="text-sm">
+                  {isPdfPreviewable(f) ? (
+                    <button
+                      onClick={() => setPdfPreview(f)}
+                      className="text-blue-600 underline"
+                    >
+                      {highlight(f.filename)}
+                    </button>
+                  ) : (
+                    <a
+                      href={f.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 underline"
+                    >
+                      {highlight(f.filename)}
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          </li>
+        ))}
+    </ul>
+
+    {items.length > (visibleCountByAgent[agentId] || INITIAL_LIMIT) && (
+      <button
+        className="mt-2 text-sm text-blue-600 underline"
+        onClick={() =>
+          setVisibleCountByAgent((p) => ({
+            ...p,
+            [agentId]:
+              (p[agentId] || INITIAL_LIMIT) + INITIAL_LIMIT,
+          }))
+        }
+      >
+        Load more
+      </button>
+    )}
+  </>
+)}
+
             </div>
           );
         })}
