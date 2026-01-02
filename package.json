@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start -p 3000",
     "lint": "eslint src --max-warnings=0",
-    "prepare": "husky"
+    "prepare": "is-ci || husky"
   },
   "lint-staged": {
     "src/**/*.{js,jsx}": [
@@ -37,6 +37,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "husky": "^9.1.7",
+    "is-ci": "^4.1.0",
     "lint-staged": "^16.2.7"
   }
 }
