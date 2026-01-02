@@ -283,8 +283,9 @@ export default function AdminDashboard({ user, signOut }) {
           const stage = txn === "PURCHASE" ? (c.stage || "UPLOADED") : null;
 
           group = {
-            type: txn, // "PURCHASE" | "RENTAL"
+            type: txn,
             label,
+            address: c.address,            // ✅ ADD THIS LINE
             stage,
             stageLabel: stage ? (STAGE_LABELS[stage] || stage) : null,
             attention: stage ? getAttentionReason(stage) : null,
@@ -296,6 +297,8 @@ export default function AdminDashboard({ user, signOut }) {
         }
 
         group.files = mergeFilesByKey(group.files, filesIncoming);
+        // ✅ Keep property address on the group (needed for Recent Activity + filenames)
+        if (c.address) group.address = c.address;
 
         // Backend is authoritative, but we only show stage for PURCHASE
         if (txn === "PURCHASE") {
@@ -590,32 +593,56 @@ const closingsSoon = useMemo(() => {
       return `${Math.floor(diffSec / 86400)}d ago`;
     };
 
-    const rows = flatFiles.map(({ agent, address, file }) => ({
-      agent,
+    const rows = [];
 
-      // 👇 REQUIRED BY TILE
-      address,
-      presignedUrl: file.presignedUrl,
+    Object.values(grouped).forEach(({ agentName, items }) => {
+      (items || []).forEach((item) => {
+        if (item.type !== "PURCHASE") return;
 
-      filename: file.filename,
-      transactionType: file.transactionType === "RENTAL" ? "Rental" : "Purchase",
-      attention: file.attention,
-      lastModified: file.lastModified,
-      relativeTime: toRelativeTime(new Date(file.lastModified)),
-    }));
+        const when = new Date(item.lastModified);
+        const relativeTime = toRelativeTime(when);
+
+        // Build a human-readable summary
+        const events = [];
+
+        (item.files || []).forEach((f) => {
+          const name = (f.filename || "").toLowerCase();
+          if (name === "contract.pdf") events.push("Contract uploaded");
+          else if (name === "alta.pdf") events.push("ALTA uploaded");
+          else if (name === "comm_disbursement.pdf")
+            events.push("Commission Disbursement generated");
+        });
+
+        if (item.stage === "CLOSED") {
+          events.push("Transaction closed");
+        }
+
+        if (!events.length) return;
+
+        // 🔑 ADAPTER: flatten into what RecentActivityTile expects
+        const contractFile = (item.files || []).find(
+          (f) => (f.filename || "").toLowerCase() === "contract.pdf"
+        );
+
+        rows.push({
+          agent: agentName,
+          address: item.address,
+          // REQUIRED by RecentActivityTile to render
+          presignedUrl: contractFile?.downloadUrl || contractFile?.url || "",
+          // Human-readable summary
+          filename: events.join(" • "),
+          transactionType: item.type === "RENTAL" ? "Rental" : "Purchase",
+          lastModified: item.lastModified,   // 🔑 REQUIRED BY RecentActivityTile
+          relativeTime,
+        });
+
+      });
+    });
 
     return rows
-      .sort((a, b) => {
-        // 🔴 Pin attention-required first
-        if (a.attention && !b.attention) return -1;
-        if (!a.attention && b.attention) return 1;
-
-        // Then newest first
-        return new Date(b.lastModified) - new Date(a.lastModified);
-      })
-      .slice(0, 20);
-  }, [flatFiles]);
-
+      .sort((a, b) => a.relativeTime.localeCompare(b.relativeTime))
+      .slice(0, 10);
+  }, [grouped]);
 
   const windowInfo = useMemo(() => {
     const { start, end, label } = getPresetDateRange(windowPreset);

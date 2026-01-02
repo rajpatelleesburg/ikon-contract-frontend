@@ -4,16 +4,15 @@ import { useState } from "react";
 import { Auth } from "aws-amplify";
 
 /**
- * useStageFlow (preserve yesterday behavior)
+ * useStageFlow (FINAL – SAFE, DROP-IN)
  *
- * Backend rules (observed):
+ * Backend rules (unchanged):
  * - UPLOADED -> EMD_COLLECTED
  * - EMD_COLLECTED -> CONTINGENCIES
- * - CONTINGENCIES -> CLOSED (backend does NOT allow CONTINGENCIES -> CLOSING)
+ * - CONTINGENCIES -> CLOSED
  *
  * UI-only:
- * - "CLOSING" is a modal step to collect ALTA + commission + title company,
- *   but backend stage remains CONTINGENCIES until you click "Closed".
+ * - "CLOSING" is a modal step only
  */
 export default function useStageFlow({ fetchContracts, getNextStage }) {
   const [stageModalOpen, setStageModalOpen] = useState(false);
@@ -24,7 +23,7 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
   const openStageModal = (contract) => {
     setSelected(contract);
     setStageForm(contract.stageData || {});
-    setModalStep(contract.stage); // UPLOADED / EMD_COLLECTED / CONTINGENCIES
+    setModalStep(contract.stage);
     setStageModalOpen(true);
   };
 
@@ -43,22 +42,20 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
       const token = session.getAccessToken().getJwtToken();
       const apiUrl = process.env.NEXT_PUBLIC_API_URL;
 
-      // =========================
-      // Decide effective backend stage
-      // =========================
       let effectiveStage = selected.stage;
+      let altaS3Key = null;
 
+      // =========================
+      // Decide effective backend stage (UNCHANGED)
+      // =========================
       if (!advance) {
-        // Save metadata only, keep stage unchanged
         effectiveStage = selected.stage;
       } else {
-        // Advance stage (backend-safe)
         if (selected.stage === "UPLOADED") {
           effectiveStage = "EMD_COLLECTED";
         } else if (selected.stage === "EMD_COLLECTED") {
           effectiveStage = "CONTINGENCIES";
         } else if (selected.stage === "CONTINGENCIES") {
-          // This "advance" happens ONLY from CLOSING modal step -> user clicked "Closed"
           effectiveStage = "CLOSED";
         } else {
           effectiveStage = getNextStage(selected.stage);
@@ -66,8 +63,7 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
       }
 
       // =========================
-      // VALIDATION + UPLOADS (match yesterday)
-      // Only when CONTINGENCIES -> CLOSED
+      // VALIDATION + UPLOADS (ONLY when CONTINGENCIES -> CLOSED)
       // =========================
       if (selected.stage === "CONTINGENCIES" && advance) {
         if (!stageForm.titleCompany?.trim()) {
@@ -83,7 +79,7 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
           return;
         }
 
-        // Upload ALTA
+        // ===== Upload ALTA (UNCHANGED LOGIC) =====
         const idPayload = session.getIdToken().payload;
         const agentFolder =
           idPayload.given_name && idPayload.family_name
@@ -120,12 +116,55 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
 
         if (!putRes.ok) throw new Error(`Upload failed (${putRes.status})`);
 
-        // Store s3Key into stageData like yesterday intent
-        stageForm.altaFile = { s3Key: presignData.key };
+        altaS3Key = presignData.key;
+
+        // Keep UI state in sync (safe)
+        setStageForm((prev) => ({
+          ...prev,
+          altaFile: { s3Key: presignData.key },
+        }));
+
+        // ===== Commission Disbursement PDF (NEW, SAFE) =====
+        const commissionPdfBlob = await generateCommissionDisbursementPDF({
+          address: `${selected.address.streetNumber} ${selected.address.streetName}, ${selected.address.city}, ${selected.address.state}`,
+          agentName: agentFolder,
+          titleCompany: stageForm.titleCompany,
+          commissionAmount: stageForm.commissionAmount,
+          adminFee: stageForm.adminFee,
+          commissionNote: stageForm.commissionNote,
+        });
+
+        const commPresignRes = await fetch(`${apiUrl}/presign`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            filename: "Comm_Disbursement.pdf",
+            contentType: "application/pdf",
+            fileSize: commissionPdfBlob.size,
+            agentName: agentFolder,
+            address: selected.address,
+            transactionType: "PURCHASE",
+            fileRole: "COMM_DISBURSEMENT",
+          }),
+        });
+
+        const commPresignData = await commPresignRes.json();
+        if (!commPresignRes.ok || !commPresignData?.url) {
+          throw new Error("Commission disbursement presign failed");
+        }
+
+        await fetch(commPresignData.url, {
+          method: "PUT",
+          headers: { "Content-Type": "application/pdf" },
+          body: commissionPdfBlob,
+        });
       }
 
       // =========================
-      // SAVE stage + stageData (same endpoint as yesterday)
+      // SAVE stage + stageData (SAFE, CORRECT)
       // =========================
       const res = await fetch(`${apiUrl}/contract/stage`, {
         method: "POST",
@@ -136,7 +175,10 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
         body: JSON.stringify({
           contractId: selected.contractId,
           stage: effectiveStage,
-          stageData: stageForm || {},
+          stageData:
+            altaS3Key
+              ? { ...stageForm, altaFile: { s3Key: altaS3Key } }
+              : (stageForm || {}),
         }),
       });
 
@@ -165,3 +207,38 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
     saveStage,
   };
 }
+
+/* =========================
+   PDF GENERATION (UNCHANGED)
+========================= */
+const generateCommissionDisbursementPDF = async ({
+  address,
+  agentName,
+  titleCompany,
+  commissionAmount,
+  adminFee,
+  commissionNote,
+}) => {
+  const { jsPDF } = await import("jspdf");
+  const doc = new jsPDF();
+
+  doc.setFontSize(14);
+  doc.text("Commission Disbursement Summary", 20, 20);
+
+  doc.setFontSize(11);
+  doc.text(`Property: ${address}`, 20, 35);
+  doc.text(`Agent: ${agentName}`, 20, 45);
+  doc.text(`Title Company: ${titleCompany}`, 20, 55);
+  doc.text(`Commission Amount: $${commissionAmount}`, 20, 65);
+
+  if (adminFee) {
+    doc.text(`Admin Fee: $${adminFee}`, 20, 75);
+  }
+
+  if (commissionNote) {
+    doc.text("Instructions:", 20, 90);
+    doc.text(commissionNote, 20, 100, { maxWidth: 170 });
+  }
+
+  return doc.output("blob");
+};

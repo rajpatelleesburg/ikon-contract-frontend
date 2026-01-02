@@ -71,6 +71,11 @@ const sortAttentionPinned = (items) =>
 
 /* ---------------- component ---------------- */
 
+const splitActivities = (filename) => {
+  if (!filename || !filename.includes("•")) return null;
+  return filename.split("•").map((s) => s.trim());
+};
+
 export default function RecentActivityTile({ activity, onOpen }) {
   const [filter, setFilter] = useState("TOP"); // TOP | TODAY | YESTERDAY | LAST_72
   const [openPreview, setOpenPreview] = useState(null);
@@ -112,60 +117,80 @@ export default function RecentActivityTile({ activity, onOpen }) {
   if (!baseSorted.length) return null;
 
   const renderRow = (a, idx) => {
-    const name = buildDisplayName(a);
-    const previewUrl = a.presignedUrl || a.url;
+    const activities = splitActivities(a.filename);
+    const address =
+      extractAddressFromPresignedUrl(a.presignedUrl) ||
+      a.addressLabel ||
+      a.propertyAddress;
 
     return (
       <li
         key={`${idx}-${a.lastModified}`}
-        onClick={() => onOpen?.()}
-        className={`py-2 flex justify-between gap-3 cursor-pointer ${
+        className={`py-3 px-3 space-y-2 ${
           isJustNow(a) ? "bg-yellow-50" : ""
         }`}
       >
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <button
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                previewUrl &&
-                  setOpenPreview({ url: previewUrl, title: name });
-              }}
-              onKeyDown={(e) =>
-                (e.key === "Enter" || e.key === " ") &&
-                setOpenPreview({ url: previewUrl, title: name })
-              }
-              className="text-sm font-medium text-blue-600 hover:underline truncate text-left"
-            >
-              {name}
-            </button>
-
-            {a.attention && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 border">
-                Attention
-              </span>
-            )}
-
-            {isJustNow(a) && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 border">
-                Just now
-              </span>
-            )}
-          </div>
-
-          <div className="text-xs text-slate-500">
-            {a.agent} · {a.transactionType}
-            {a.attention && ` · ${a.attention}`}
-          </div>
+        {/* Property header */}
+        <div className="text-sm font-semibold text-slate-800 truncate">
+          {address || "Property"}
         </div>
 
-        <div className="text-xs text-slate-400 whitespace-nowrap">
-          {a.relativeTime}
+        {/* Activity list */}
+        {activities ? (
+          <ul className="list-disc pl-5 space-y-1 text-sm">
+            {activities.map((act, i) => {
+              const lower = act.toLowerCase();
+
+              // Decide link target per activity
+              let linkUrl = null;
+              if (lower.includes("contract")) {
+                linkUrl = a.presignedUrl; // Contract.pdf
+              } else if (lower.includes("alta")) {
+                linkUrl = a.presignedUrl; // ALTA.pdf is also acceptable
+              } else if (lower.includes("commission")) {
+                linkUrl = a.presignedUrl;
+              }
+
+              return (
+                <li key={i} className="text-slate-700">
+                  {linkUrl ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenPreview({
+                          url: linkUrl,
+                          title: act,
+                        });
+                      }}
+                      className="text-blue-600 hover:underline"
+                    >
+                      {act}
+                    </button>
+                  ) : (
+                    <span>{act}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <div className="text-sm text-blue-600">
+            {buildDisplayName(a)}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex justify-between text-xs text-slate-500 pt-1">
+          <span>
+            {a.agent} · {a.transactionType}
+            {a.attention && ` · ${a.attention}`}
+          </span>
+          <span>{a.relativeTime}</span>
         </div>
       </li>
     );
   };
+
 
   return (
     <>
