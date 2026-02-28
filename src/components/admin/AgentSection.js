@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import toast from "react-hot-toast";
 
 /* =========================
    STAGE BADGE COLORS
@@ -115,7 +116,7 @@ export default function AgentSection({
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          alert("Nudge sent to agent (placeholder)");
+          toast.success("Nudge sent to agent");
         }}
         className="ml-2 text-blue-600 underline text-[11px]"
       >

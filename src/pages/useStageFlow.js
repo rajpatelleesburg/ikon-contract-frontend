@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Auth } from "aws-amplify";
+import toast from "react-hot-toast";
 
 /**
  * useStageFlow (FINAL – SAFE, DROP-IN)
@@ -67,15 +68,15 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
       // =========================
       if (selected.stage === "CONTINGENCIES" && advance) {
         if (!stageForm.titleCompany?.trim()) {
-          alert("Title Company Name is required.");
+          toast.error("Title Company Name is required.");
           return;
         }
         if (!stageForm.commissionAmount) {
-          alert("Commission Amount is required.");
+          toast.error("Commission Amount is required.");
           return;
         }
         if (!(stageForm.altaFile instanceof File)) {
-          alert("ALTA / Settlement Statement (PDF) is required.");
+          toast.error("ALTA / Settlement Statement (PDF) is required.");
           return;
         }
 
@@ -191,7 +192,7 @@ export default function useStageFlow({ fetchContracts, getNextStage }) {
       closeStageModal();
     } catch (err) {
       console.error(err);
-      alert("Unable to update stage.");
+      toast.error("Unable to update stage.");
     }
   };
 

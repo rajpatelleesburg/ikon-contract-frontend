@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Auth } from "aws-amplify";
+import toast from "react-hot-toast";
 
 export default function AuditLogPage() {
   const [items, setItems] = useState([]);
@@ -73,7 +74,7 @@ export default function AuditLogPage() {
       setRestoreTarget(null);
     } catch (e) {
       console.error("Restore failed", e);
-      alert("Restore failed. Check logs.");
+      toast.error("Restore failed. Check logs.");
     } finally {
       setRestoreBusy(false);
     }
